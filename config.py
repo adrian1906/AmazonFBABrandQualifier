@@ -160,3 +160,111 @@ QUALIFICATION_CATEGORIES = [
     "Evidence of professional wholesale operations",
     "Potential barriers or restrictions",
 ]
+
+
+# ===========================================================================
+# Supplier Qualifier configuration
+#
+# Everything specific to the Supplier/Distributor Discovery capability lives
+# below, following the same principle as the rest of this file: weights and
+# thresholds are defined once here (not scattered through prompts or code)
+# so they can be tuned in one place.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# R&T operating region / geographic fit
+# ---------------------------------------------------------------------------
+
+RT_OPERATING_STATE = "Maryland"
+RT_REQUIRES_MARYLAND_SERVICE = True  # a candidate must ship to/serve Maryland to be viable at all
+
+PREFERRED_SUPPLIER_GEOGRAPHY = [
+    "Maryland", "Delaware", "Washington D.C.", "Northern Virginia",
+]  # prioritized, but credible national suppliers are never excluded for being outside this list
+
+# ---------------------------------------------------------------------------
+# Supplier scoring weights (0-100 total). Mirrors the OUTREACH_RUBRIC pattern
+# above: defined once, asserted to sum to 100, rendered into agent prompts by
+# format_supplier_rubric() so a weight change here changes actual behavior.
+# ---------------------------------------------------------------------------
+
+SUPPLIER_SCORING_WEIGHTS = {
+    "Brand authorization evidence": 20,
+    "Marketplace/channel compatibility": 15,
+    "Invoice and supply-chain defensibility": 15,
+    "Account accessibility for R&T": 10,
+    "Business legitimacy and contact quality": 10,
+    "Catalog/data usability": 10,
+    "Commercial terms and initial-order accessibility": 8,
+    "Geographic/service fit": 5,
+    "Operational fulfillment fit": 4,
+    "Risk profile": 3,
+}
+
+assert sum(SUPPLIER_SCORING_WEIGHTS.values()) == 100, "SUPPLIER_SCORING_WEIGHTS weights must sum to 100"
+
+
+def format_supplier_rubric() -> str:
+    lines = [f"- {name}: {weight} points" for name, weight in SUPPLIER_SCORING_WEIGHTS.items()]
+    return "\n".join(lines) + f"\n\nTotal: {sum(SUPPLIER_SCORING_WEIGHTS.values())} points"
+
+
+# Recommendation thresholds, applied to the final (post-gate) 0-100 score.
+# Gates in supplier_scoring.py can force DO_NOT_PURSUE regardless of score;
+# these thresholds only apply when no hard gate has already decided the outcome.
+SUPPLIER_RECOMMENDATION_THRESHOLDS = {
+    "CONTACT_NOW": 70,          # final_score >= this -> CONTACT_NOW (if no gate blocks it)
+    "INVESTIGATE_FURTHER": 40,  # final_score >= this (and < CONTACT_NOW) -> INVESTIGATE_FURTHER
+    # anything below INVESTIGATE_FURTHER -> DO_NOT_PURSUE
+}
+
+# ---------------------------------------------------------------------------
+# Research / escalation / caching
+# ---------------------------------------------------------------------------
+
+# Fields that trigger a second, more targeted research pass when left UNKNOWN
+# or CONFLICTING after the first pass. No second provider is introduced (see
+# README "Research provider" note) - escalation means a second, more targeted
+# WebSearchTool-backed pass focused specifically on these fields.
+SUPPLIER_ESCALATION_FIELDS = [
+    "brand_authorization",
+    "amazon_marketplace_permission",
+    "legal_identity_or_location",
+    "supplier_role",
+    "invoice_suitability",
+]
+
+SUPPLIER_MAX_ESCALATIONS_PER_BRAND = 3  # cap on extra targeted research passes per brand, to bound cost
+SUPPLIER_STALE_DATA_DAYS = 90  # a relationship's research is considered stale after this many days
+# The cache lives under SUPPLIER_DATA_DIR_NAME/cache/ - see supplier_persistence.CACHE_DIR.
+
+SUPPLIER_DEFAULT_CONCURRENCY = 5
+SUPPLIER_DEFAULT_RETRIES = 2
+SUPPLIER_DEFAULT_TIMEOUT_SECONDS = 120
+# Cost is bounded via SUPPLIER_MAX_ESCALATIONS_PER_BRAND above, --concurrency,
+# and --limit on supplier_batch_runner.py - there is no per-run USD spend
+# metering API available to enforce a raw dollar cap against, so one isn't
+# faked here.
+
+# ---------------------------------------------------------------------------
+# Output locations
+# ---------------------------------------------------------------------------
+
+SUPPLIER_DATA_DIR_NAME = "supplier_data"          # suppliers/, relationships/, runs/, cache/
+SUPPLIER_REPORTS_DIR_NAME = "supplier_reports"
+
+# ---------------------------------------------------------------------------
+# Outreach
+# ---------------------------------------------------------------------------
+
+SUPPLIER_ENABLED_OUTREACH_STRATEGIES = ["relationship", "procurement", "partnership"]
+
+
+def supplier_sender_email() -> str:
+    """The email identity used for supplier-facing outreach - purchasing@
+    if configured, falling back to R&T's primary email. Never hardcoded
+    outside RT_PROFILE."""
+    for candidate in RT_PROFILE["functional_emails"]:
+        if candidate.startswith("purchasing@"):
+            return candidate
+    return RT_PROFILE["primary_email"]

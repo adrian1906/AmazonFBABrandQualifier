@@ -58,8 +58,14 @@ def load_result(path: Path) -> WorkflowResult:
 
 
 def find_results(name_fragment: str, directory: Path = RESULTS_DIR) -> list[Path]:
-    """Find saved result files whose filename contains name_fragment (case-insensitive)."""
+    """Find saved result files whose filename contains name_fragment (case-insensitive).
+
+    Matches against the slugified form of the fragment, not the raw text -
+    saved filenames replace spaces/punctuation with underscores (see
+    _slugify above), so a raw multi-word fragment like "Northwind Outdoor"
+    would otherwise never match "Northwind_Outdoor_..." at all.
+    """
     if not directory.exists():
         return []
-    fragment = name_fragment.lower()
+    fragment = _slugify(name_fragment).lower()
     return sorted(p for p in directory.glob("*.json") if fragment in p.name.lower())
