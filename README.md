@@ -29,6 +29,41 @@ hard-gate sections below.
 No code path in this project sends an email.** Every run ends at a human
 approval gate.
 
+## GUI (recommended if you're not comfortable on a command line)
+
+```
+uv sync
+cp .env.example .env   # fill in OPENAI_API_KEY
+uv run streamlit run app.py
+```
+
+This opens a local web page (`http://localhost:8501`) covering both
+stages, with four tabs:
+
+- **Reports** - read-only. Browse Brand Qualifier results and Supplier
+  Qualifier reports (ranked list, brand-to-supplier matrix, missing-info
+  queue, contact-now queue, do-not-pursue-with-reasons). No API calls.
+- **Review Queue** - the human approval gate as buttons instead of typed
+  commands: pick a brand or a brand↔supplier relationship, edit the
+  subject/body if you want, then **Approve** (writes to `outbox/`, marked
+  NOT SENT - nothing is ever emailed automatically), **Regenerate**, or
+  **Reject**.
+- **Single Lookup** - research one brand, or one brand's suppliers, right
+  from the page. Bounded cost (a handful of API calls, not a batch) - safe
+  to hand to someone who isn't going to accidentally run up a bill.
+- **Command Builder** - fill in a form (which CSV, which brands, how many
+  at once, etc.) and it prints the *exact* `batch_runner.py` /
+  `supplier_batch_runner.py` command to paste into a terminal, with a
+  plain-language note on what it does and roughly what it costs. Multi-brand
+  batch runs are deliberately **never** started from the GUI itself - they
+  cost real money and can run for a while, so a terminal command with a
+  human in front of it stays the only way to kick one off. This tab exists
+  so you (or anyone else running this) don't have to memorize the flags.
+
+Everything the GUI does calls the exact same underlying code as the CLI
+tools below (`gui_actions.py` is a thin wrapper, no separate logic) - the
+GUI and the CLI can be used interchangeably on the same data.
+
 ## Brand Qualifier (Stage 1)
 
 ## What it does
@@ -481,10 +516,16 @@ wholesaler, unknown Amazon permission, prohibited Amazon resale, one
 supplier tied to multiple brands) end to end through the real pipeline with
 mocked agents; `tests/test_supplier_scoring.py` covers the same hard gates
 directly. `isolated_supplier_data` (in `conftest.py`) redirects all
-`supplier_data/`/`outbox/` paths to a temp directory automatically, so
-tests never touch real project data. The Brand Qualifier itself had no test
-suite before this change; `tests/test_persistence.py` and
-`tests/test_brand_batch_link.py` are its first tests, added because
+`supplier_data/`/`batch_results/`/`outbox/` paths to a temp directory
+automatically and disables SDK tracing (`agents.set_tracing_disabled`),
+since `trace(...)` otherwise tries to phone home to OpenAI independently of
+whether `Runner.run` is mocked - so tests never touch real project data or
+make a real network call, full stop. `tests/test_gui_actions.py` and
+`tests/test_gui_command_builder.py` cover the GUI's wrapper/command-string
+logic the same way (no Streamlit process is started in tests - `app.py`
+itself was verified by hand with `streamlit run`). The Brand Qualifier
+itself had no test suite before this change; `tests/test_persistence.py`
+and `tests/test_brand_batch_link.py` are its first tests, added because
 `brand_batch_link.py` depends on `persistence.py`'s behavior directly.
 
 ## Origin

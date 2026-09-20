@@ -42,7 +42,10 @@ def _prompt_multiline(label: str) -> str:
     return "\n".join(lines)
 
 
-def _save_approved(result: WorkflowResult) -> Path:
+def save_approved_outreach(result: WorkflowResult) -> Path:
+    """Write the winning draft to outbox/, marked NOT SENT. Public because
+    both the CLI approval gate below and the GUI's Approve button call this
+    exact same code path - there is only one way anything gets "approved"."""
     OUTBOX_DIR.mkdir(exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", result.prospect.company_name).strip("_") or "prospect"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -72,7 +75,7 @@ async def run_approval_gate(result: WorkflowResult) -> None:
         choice = _prompt_choice()
 
         if choice == "approve":
-            path = _save_approved(result)
+            path = save_approved_outreach(result)
             print(f"\nApproved. Saved to: {path}")
             print(
                 "Reminder: this project does not send email automatically. "

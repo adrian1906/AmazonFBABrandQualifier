@@ -43,8 +43,9 @@ def result_from_dict(data: dict) -> WorkflowResult:
     )
 
 
-def save_result(result: WorkflowResult, directory: Path = RESULTS_DIR) -> Path:
+def save_result(result: WorkflowResult, directory: Path | None = None) -> Path:
     """Save one WorkflowResult as a JSON file, named after the company. Returns the file path."""
+    directory = directory or RESULTS_DIR
     directory.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = directory / f"{_slugify(result.prospect.company_name)}_{timestamp}.json"
@@ -57,7 +58,7 @@ def load_result(path: Path) -> WorkflowResult:
     return result_from_dict(data)
 
 
-def find_results(name_fragment: str, directory: Path = RESULTS_DIR) -> list[Path]:
+def find_results(name_fragment: str, directory: Path | None = None) -> list[Path]:
     """Find saved result files whose filename contains name_fragment (case-insensitive).
 
     Matches against the slugified form of the fragment, not the raw text -
@@ -65,6 +66,7 @@ def find_results(name_fragment: str, directory: Path = RESULTS_DIR) -> list[Path
     _slugify above), so a raw multi-word fragment like "Northwind Outdoor"
     would otherwise never match "Northwind_Outdoor_..." at all.
     """
+    directory = directory or RESULTS_DIR
     if not directory.exists():
         return []
     fragment = _slugify(name_fragment).lower()
