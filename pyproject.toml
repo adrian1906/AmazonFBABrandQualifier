@@ -1,0 +1,21 @@
+[project]
+name = "amazon-fba-brand-qualifier"
+version = "0.2.0"
+description = "R&T Distribution Group's Brand and Supplier Qualifier: a multi-agent research/scoring/outreach-drafting system built on the OpenAI Agents SDK."
+requires-python = ">=3.12"
+dependencies = [
+    # Pinned to the exact version verified working (later releases pull in a
+    # newer `mcp` -> `pywin32` chain whose stdio-server import fails to load
+    # its DLL on this machine: "ImportError: DLL load failed while importing
+    # win32api"). This project never uses MCP tools at all - only Agent,
+    # Runner, trace, and WebSearchTool - so pinning here costs nothing.
+    "openai-agents==0.15.1",
+    "pydantic>=2.13.3",
+    "python-dotenv>=1.2.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+]

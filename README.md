@@ -4,9 +4,10 @@ A prototype multi-agent system that helps **R&T Distribution Group LLC**
 research, qualify, and draft outreach — first to prospective **brands**
 (Stage 1, Version 1), and then to the **suppliers** who can actually get
 those brands into R&T's hands for resale (Stage 2, added in Version 2).
-Built on top of the OpenAI Agents SDK, adapted from the Week 2 sales-agent
-exercise in [`3_lab3.ipynb`](../3_lab3.ipynb) of Ed Donner's Agentic AI
-course.
+Built on top of the OpenAI Agents SDK. The Brand Qualifier stage started
+life as an adaptation of the Week 2 sales-agent exercise (`3_lab3.ipynb`)
+from Ed Donner's Agentic AI course, and later graduated into this
+standalone repository as its own product.
 
 **Two-stage workflow:**
 
@@ -91,25 +92,29 @@ every agent's instructions.
 
 `workflow.py`'s `run_brand_acquisition()` orchestrates the pipeline with
 plain `async`/`await` calls to `Runner.run()` — **not** the SDK's handoff
-feature. This mirrors the course's own official
-[`deep_research/research_manager.py`](../deep_research/research_manager.py)
-pattern (planner → search agents → writer, all called explicitly), and
-matches the course author's stated preference in `2_lab2.ipynb` ("I am not
-a fan of handoffs... unreliable"). The three outreach agents run
-concurrently via `asyncio.gather()` against identical input, which is what
-guarantees they're truly independent — none of them can see another's
-draft.
+feature (deliberately: handoffs hand control *between* agents, which makes
+it harder to guarantee independence between the three outreach drafts
+below). The three outreach agents run concurrently via `asyncio.gather()`
+against identical input, which is what guarantees they're truly
+independent — none of them can see another's draft.
 
 The whole run is wrapped in `with trace(...)`, so each run shows up as a
-named trace at <https://platform.openai.com/traces>, exactly like the
-existing notebooks. You can see which agent ran, its input/output, any
-tool calls (e.g. `WebSearchTool`), and how long each step took. No API
-keys are ever printed to the console or included in trace output by this
-code.
+named trace at <https://platform.openai.com/traces>. You can see which
+agent ran, its input/output, any tool calls (e.g. `WebSearchTool`), and how
+long each step took. No API keys are ever printed to the console or
+included in trace output by this code.
+
+## Setup
+
+```
+uv sync
+cp .env.example .env   # then fill in OPENAI_API_KEY
+```
 
 ## How to run
 
-From this directory, using the same conda environment the notebooks use:
+From this directory, using the project's virtual environment (`uv run ...`,
+or activate `.venv` directly):
 
 ```
 python demo.py
@@ -167,16 +172,13 @@ straight to the Research Agent — never re-derived or guessed at.
 
 ## Required environment variables
 
-Same `.env` already used by the rest of the course repo:
+Copy [`.env.example`](.env.example) to `.env` and fill it in:
 
 - `OPENAI_API_KEY` — required. Used for all agent calls and for
   `WebSearchTool` (no separate search API key needed).
-- `DEFAULT_MODEL_NAME` — optional, defaults to `gpt-5.4-mini` (same
-  convention as `deep_research/search_agent.py`).
+- `DEFAULT_MODEL_NAME` — optional, defaults to `gpt-5.4-mini`.
 
-The Supplier Qualifier (below) needed no new secrets - see
-[`.env.example`](.env.example) for a copy of this list scoped to this
-project specifically.
+The Supplier Qualifier (below) needed no new secrets.
 
 ## Human approval requirement
 
@@ -185,8 +187,8 @@ anything — it writes the approved subject/body to a local file under
 `outbox/`, clearly marked `NOT SENT`, for a human to send manually.
 **EDIT** lets you retype the subject/body before re-approving. **REGENERATE**
 re-runs only the outreach-drafting + manager stages (research/qualification
-are reused). **REJECT** exits without saving anything. `messenger.py` (the
-course's SMTP/Pushover sender) is never imported anywhere in this project.
+are reused). **REJECT** exits without saving anything. No email-sending
+library or capability is imported anywhere in this project.
 
 ## Current limitations (Brand Qualifier)
 
@@ -206,7 +208,7 @@ these additive rather than requiring a rewrite. ~~Struck through~~ items
 are now implemented - by the Supplier Qualifier (see below), not by
 rewriting the Brand Qualifier itself:
 
-- Deeper automated web research (multi-query planning, like `deep_research/planner_agent.py`)
+- Deeper automated web research (multi-query planning across several search passes)
 - SmartScout / Keepa / SellerAmp data as additional research inputs
 - Amazon profitability analysis (a distinct agent from Qualification)
 - ~~Wholesale contact discovery~~ → see Supplier Qualifier
@@ -388,12 +390,10 @@ additional, narrowly-targeted research pass (capped by
 cost) - see `supplier_workflow._needs_escalation` /`_merge_escalation`.
 
 **On the research provider**: research uses the same `WebSearchTool` the
-Brand Qualifier already uses - no Tavily, no OpenRouter. `tavily-python` is
-a dependency of the overall course repo (used by unrelated community
-contributions) but was never wired into this project, and introducing a
-second paid provider or routing model calls through OpenRouter were both
-explicitly declined for this version (new secrets + new external cost with
-no functional gain, since `WebSearchTool` requires OpenAI-direct model
+Brand Qualifier already uses - no Tavily, no OpenRouter. Introducing a
+second paid search provider or routing model calls through OpenRouter were
+both explicitly declined for this version (new secrets + new external cost
+with no functional gain, since `WebSearchTool` requires OpenAI-direct model
 calls to work at all). "Escalation" here means a second, more targeted
 `WebSearchTool` pass, not a second provider.
 
@@ -468,8 +468,6 @@ change made to an existing Brand Qualifier file.
 ## Tests
 
 ```
-uv run pytest 2_openai/r_and_t_brand_acquisition   # from the repo root
-# or, from this directory:
 uv run pytest
 ```
 
@@ -489,8 +487,8 @@ suite before this change; `tests/test_persistence.py` and
 `tests/test_brand_batch_link.py` are its first tests, added because
 `brand_batch_link.py` depends on `persistence.py`'s behavior directly.
 
-## Relationship to the original tutorial
+## Origin
 
-[`3_lab3.ipynb`](../3_lab3.ipynb) (the course notebook this was adapted
-from) is untouched and preserved for reference — this project lives
-alongside it in its own folder, not inside it.
+This project started as an exercise adapted from Ed Donner's Agentic AI
+course (`3_lab3.ipynb`'s sales-agent lab) and has since grown into its own
+standalone system, developed in this repository going forward.
