@@ -1,0 +1,4 @@
+Brand,Website,Category,Seller Count,Amazon Sells,Number of ASINs,Estimated Monthly Revenue,Average Price,Margin Ratio,Ungating Requirement
+Fictional Trailhead Gear Co,https://example-trailhead-gear.invalid,Outdoor Recreation,7,No,42,18500,34.99,3.4,None - ungated category
+Fictional BrightHome Kitchenware,https://example-brighthome-kitchen.invalid,Home & Kitchen,12,No,68,41200,22.50,2.1,10 units to ungate
+Fictional PawPrime Pet Supply,https://example-pawprime-pet.invalid,Pet Supplies,4,Yes,15,9800,15.00,3.9,None - ungated category
