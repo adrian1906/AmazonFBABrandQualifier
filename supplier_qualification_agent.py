@@ -59,6 +59,19 @@ Scoring guidance:
   (liquidation inventory, retail receipts, unverifiable authorization,
   gated catalog, unclear legal entity, suspicious ungating claims, copied
   catalogs, inconsistent contact info).
+- "New-business/startup accessibility": score roughly 80-100 when
+  new_business_accessible is "yes" (explicit evidence a brand-new buyer
+  with no trading history can open an account - no minimum years in
+  business, no trade references, no credit application required, or
+  explicit welcoming language for new/startup accounts). Score roughly
+  0-15 when it's "no" (an explicit barrier was found - required years in
+  business, trade references, or mandatory credit approval). Score
+  "unknown" in the 35-50 range specifically - clearly below a confirmed
+  "yes" but clearly, visibly above a confirmed "no", not collapsed down
+  next to it. Absence of a stated barrier is not evidence of
+  accessibility, and a small opening order alone does not mean "yes" -
+  but not knowing is a meaningfully different, less bad situation than
+  knowing there's a real barrier, and the score must reflect that gap.
 
 Also provide:
 - rationale: a short overall explanation

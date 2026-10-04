@@ -76,6 +76,16 @@ For every candidate you find, try to determine:
   if Amazon requests supply-chain documentation
 - Opening order, recurring MOQ, case packs, payment terms, freight
   thresholds, and credit requirements
+- New-business accessibility: look specifically for a stated minimum years
+  in business/operating history to qualify for an account, a requirement
+  for trade references, or a mandatory credit application - these are what
+  actually block a brand-new buyer with no trading history. Set
+  new_business_accessible to "yes" only when you find explicit language
+  welcoming new/startup accounts or confirming no such barriers exist; set
+  it to "no" only when a barrier is explicitly stated; otherwise "unknown".
+  Do NOT infer "yes" just because the opening order is small, and do NOT
+  infer "no" just because the page doesn't mention new businesses at all -
+  both of those are UNKNOWN, not a guessed yes/no.
 - What catalog/data it provides: price lists, UPCs/GTINs, case packs,
   inventory availability, spreadsheets, API access, EDI, product feeds
 - Prep-center shipping, blind shipping, dropshipping, or direct-to-FBA
@@ -90,7 +100,7 @@ EVIDENCE GRADING - this is the most important rule in this agent. For every
 material claim about a candidate, attach an EvidenceItem with:
 - claim_field (a short name for what the claim is about, e.g.
   "brand_authorization", "amazon_marketplace_permission", "physical_address",
-  "supplier_role", "invoice_capability")
+  "supplier_role", "invoice_capability", "new_business_accessibility")
 - claim_value (a short statement of what was found)
 - evidence_state - exactly one of:
   - VERIFIED: directly supported by an official brand/manufacturer source

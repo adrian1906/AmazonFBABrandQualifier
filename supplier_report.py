@@ -107,6 +107,8 @@ Amazon marketplace status: {_amazon_status(rel)}
 Invoice fields supported: {", ".join(c.invoice_fields_supported) or "unknown"}
 Can verify / provide LOA: {c.can_verify_or_provide_loa}
 Commercial terms: opening order={c.opening_order or "unknown"}, MOQ={c.recurring_moq or "unknown"}, payment={c.payment_terms or "unknown"}
+New-business friendly: {c.new_business_accessible} ({c.new_business_accessibility_notes or "no notes recorded"})
+  - min. years in business required: {c.requires_minimum_years_in_business or "not stated"}, trade references required: {c.requires_trade_references}, credit application required: {c.requires_credit_application}
 Catalog/data availability: {", ".join(c.catalog_data_formats) or "unknown"}
 MAP/territory restrictions: {c.map_territory_restrictions or "unknown"}
 Risk flags: {", ".join(c.risk_flags) or "none noted"}
@@ -186,6 +188,33 @@ def format_contact_now_queue(relationships: list[BrandSupplierRelationship]) -> 
     return "\n".join(lines)
 
 
+def format_startup_friendly_call_list(relationships: list[BrandSupplierRelationship]) -> str:
+    """Candidates that explicitly confirmed they'll work with a brand-new
+    business with no trading history - the actionable starting point for a
+    buyer who doesn't have a first distributor yet. Excludes DO_NOT_PURSUE
+    (an explicitly confirmed barrier elsewhere, e.g. PROHIBITED Amazon
+    resale, still means skip it regardless of new-business accessibility)."""
+    candidates = [
+        r for r in relationships
+        if r.assessment.candidate.new_business_accessible == "yes" and r.assessment.recommendation != "DO_NOT_PURSUE"
+    ]
+    candidates.sort(key=lambda r: r.assessment.score_breakdown.final_score, reverse=True)
+
+    lines = ["STARTUP-FRIENDLY CALL LIST", "", "Confirmed - in their own stated terms - to work with a business that has no existing trading history.", ""]
+    if not candidates:
+        lines.append("(none found yet - check the missing-information queue above; most candidates haven't had this confirmed either way)")
+        return "\n".join(lines)
+
+    for rel in candidates:
+        c = rel.assessment.candidate
+        lines.append(format_relationship_summary_line(rel))
+        lines.append(f"    Phone: {c.phone or 'unknown'}  |  Contact: {c.contact_method or 'unknown'}  |  Website: {c.website or 'unknown'}")
+        lines.append(f"    Opening order: {c.opening_order or 'unknown'}")
+        lines.append(f"    Why: {c.new_business_accessibility_notes or '(no notes recorded)'}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def format_do_not_pursue_section(relationships: list[BrandSupplierRelationship]) -> str:
     do_not_pursue = [r for r in relationships if r.assessment.recommendation == "DO_NOT_PURSUE"]
     lines = ["DO-NOT-PURSUE", ""]
@@ -204,6 +233,7 @@ def format_do_not_pursue_section(relationships: list[BrandSupplierRelationship])
 def format_full_supplier_report(relationships: list[BrandSupplierRelationship]) -> str:
     sections = [
         format_ranked_report(relationships),
+        format_startup_friendly_call_list(relationships),
         format_brand_supplier_matrix(relationships),
         format_missing_information_queue(relationships),
         format_contact_now_queue(relationships),

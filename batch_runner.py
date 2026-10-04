@@ -17,11 +17,20 @@ Once you've picked a promising one from the summary, use review_one.py to
 load its saved result and run the normal APPROVE / EDIT / REGENERATE /
 REJECT gate on it - with no further agent calls unless you choose REGENERATE.
 
+Already-scored brands are skipped by default (see persistence.scored_company_names)
+- safe to re-run this against a CSV that overlaps a previous run, e.g. after
+merging a new SmartScout export with an old one (see merge_smartscout_exports.py).
+"Already scored" only counts a result saved within the last
+config.BRAND_STALE_DATA_DAYS days (default 90) - older than that, SmartScout's
+own numbers have likely drifted, so it's re-processed rather than skipped
+forever. Pass --rescore to process every row regardless of age.
+
 Usage:
     python batch_runner.py --csv my_smartscout_export.csv
     python batch_runner.py --csv my_smartscout_export.csv --limit 5   # cheap test run
     python batch_runner.py --csv my_smartscout_export.csv --concurrency 3
     python batch_runner.py --csv my_smartscout_export.csv --no-web-search
+    python batch_runner.py --csv my_smartscout_export.csv --rescore   # re-process even already-scored brands
 """
 
 import argparse
@@ -32,7 +41,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from persistence import RESULTS_DIR, save_result
+from config import BRAND_STALE_DATA_DAYS
+from entity_resolution import normalize_company_name
+from persistence import RESULTS_DIR, save_result, scored_company_names
 from smartscout_import import load_prospects_from_csv
 from workflow import WorkflowResult, run_brand_acquisition
 
@@ -98,13 +109,29 @@ async def run_batch(
     limit: int | None = None,
     concurrency: int = 5,
     allow_web_search: bool = True,
+    skip_scored: bool = True,
 ) -> list[WorkflowResult]:
     rows = load_prospects_from_csv(csv_path)
+    total_loaded = len(rows)
+
+    skipped = 0
+    if skip_scored:
+        already = scored_company_names(max_age_days=BRAND_STALE_DATA_DAYS)
+        before = len(rows)
+        rows = [(p, notes) for p, notes in rows if normalize_company_name(p.company_name) not in already]
+        skipped = before - len(rows)
+        if skipped:
+            print(f"Skipping {skipped} brand(s) already scored within the last {BRAND_STALE_DATA_DAYS} days "
+                  f"(pass --rescore to process them anyway).")
+
     if limit is not None:
         rows = rows[:limit]
 
     if not rows:
-        print("No prospects found in CSV - nothing to do.")
+        if total_loaded and skipped == total_loaded:
+            print("Nothing new to process - every brand in this CSV has already been scored (pass --rescore to re-run anyway).")
+        else:
+            print("No prospects found in CSV - nothing to do.")
         return []
 
     print(f"Loaded {len(rows)} prospect(s) from {csv_path}. Concurrency: {concurrency}. "
@@ -141,7 +168,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--csv", required=True, help="Path to a SmartScout-style CSV export")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N rows (useful for a cheap test run)")
     parser.add_argument("--concurrency", type=int, default=5, help="Max brands processed in parallel (default: 5)")
-    parser.add_argument("--no-web-search", action="store_true", help="Disable web search (Tavily); rely only on the CSV/manual notes")
+    parser.add_argument("--no-web-search", action="store_true", help="Disable WebSearchTool; rely only on the CSV/manual notes")
+    parser.add_argument("--rescore", action="store_true",
+                         help="Process every row even if already scored in a previous run (default: skip already-scored brands)")
     return parser.parse_args()
 
 
@@ -151,5 +180,6 @@ if __name__ == "__main__":
         csv_path=args.csv,
         limit=args.limit,
         concurrency=args.concurrency,
+        skip_scored=not args.rescore,
         allow_web_search=not args.no_web_search,
     ))

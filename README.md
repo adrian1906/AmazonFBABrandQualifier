@@ -29,6 +29,11 @@ hard-gate sections below.
 No code path in this project sends an email.** Every run ends at a human
 approval gate.
 
+**New here, or don't have a first distributor yet?** See
+[WORKFLOW.md](WORKFLOW.md) for a complete, copy-pasteable walkthrough -
+SmartScout export in, printable call list out - rather than piecing it
+together from the sections below.
+
 ## GUI (recommended if you're not comfortable on a command line)
 
 ```

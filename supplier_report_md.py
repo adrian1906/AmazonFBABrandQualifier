@@ -83,6 +83,9 @@ def _distributor_section(rel: BrandSupplierRelationship) -> str:
         f"- **Invoice fields supported:** {', '.join(c.invoice_fields_supported) or '—'}",
         f"- **Can verify / provide LOA:** {c.can_verify_or_provide_loa}",
         f"- **Opening order / MOQ / payment terms:** {_val(c.opening_order)} / {_val(c.recurring_moq)} / {_val(c.payment_terms)}",
+        f"- **New-business friendly:** {c.new_business_accessible} — {_val(c.new_business_accessibility_notes)} "
+        f"(years in business: {_val(c.requires_minimum_years_in_business)}, trade references: {c.requires_trade_references}, "
+        f"credit application: {c.requires_credit_application})",
         f"- **Catalog/data formats:** {', '.join(c.catalog_data_formats) or '—'}",
         f"- **MAP/territory restrictions:** {_val(c.map_territory_restrictions)}",
         f"- **Risk flags:** {', '.join(c.risk_flags) or 'none noted'}",
@@ -167,8 +170,31 @@ def build_markdown(relationships: list[BrandSupplierRelationship], label: str) -
             f"{top.assessment.score_breakdown.final_score} | {top.assessment.recommendation} | {len(rels)} |"
         )
 
+    startup_friendly = [
+        r for r in relationships
+        if r.assessment.candidate.new_business_accessible == "yes" and r.assessment.recommendation != "DO_NOT_PURSUE"
+    ]
+    startup_friendly.sort(key=lambda r: r.assessment.score_breakdown.final_score, reverse=True)
+    call_list = [
+        "", "## Startup-Friendly Call List", "",
+        "Confirmed - in their own stated terms - to work with a business that has no existing trading history. "
+        "Start here if you don't have a first distributor yet.", "",
+    ]
+    if startup_friendly:
+        call_list += ["| Brand | Distributor | Score | Phone | Contact | Opening order |", "|---|---|---|---|---|---|"]
+        call_list += [
+            f"| {r.brand_name} | {r.assessment.candidate.legal_business_name} | {r.assessment.score_breakdown.final_score} | "
+            f"{_val(r.assessment.candidate.phone)} | {_val(r.assessment.candidate.contact_method)} | {_val(r.assessment.candidate.opening_order)} |"
+            for r in startup_friendly
+        ]
+    else:
+        call_list.append(
+            "_(none confirmed yet - most candidates below have this as UNKNOWN rather than a confirmed yes or no; "
+            "the fastest next step is calling a few top-ranked INVESTIGATE_FURTHER/CONTACT_NOW candidates to ask directly.)_"
+        )
+
     sections = [_brand_section(i, brand_name, rels) for i, (brand_name, rels) in enumerate(brand_order, start=1)]
-    return f"\n{_PAGE_BREAK}\n\n".join(["\n".join(header)] + sections)
+    return f"\n{_PAGE_BREAK}\n\n".join(["\n".join(header + call_list)] + sections)
 
 
 def main() -> None:

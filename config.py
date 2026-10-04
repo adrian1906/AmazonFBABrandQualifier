@@ -17,10 +17,25 @@ configuration.
 """
 
 import os
+import sys
 from dotenv import load_dotenv
 from agents import set_tracing_disabled
 
 load_dotenv(override=True)
+
+# Research/distributor names routinely contain non-ASCII characters (e.g.
+# "Hāmākua Macadamia Nut Company", "丸久小山園") that crash a plain print()
+# on Windows' default cp1252 console encoding - UnicodeEncodeError, seen for
+# real in supplier_report_cli.py and grow_distributor_master_list.py. Fixed
+# once, centrally, here (config.py is imported by nearly every entry point)
+# rather than patched into each CLI script individually. Guarded because
+# pytest sometimes substitutes a stdout/stderr wrapper that doesn't support
+# .reconfigure() - this must never break the test suite.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 # Disabled at the user's request - the per-run trace at
 # platform.openai.com/traces (every `with trace(...)` in workflow.py /
@@ -185,6 +200,14 @@ QUALIFICATION_CATEGORIES = [
     "Potential barriers or restrictions",
 ]
 
+# Mirrors SUPPLIER_STALE_DATA_DAYS below (same default) - a brand's saved
+# score is considered stale after this many days, so batch_runner.py's
+# skip-already-scored check treats it as needing a fresh re-score rather
+# than skipping it forever. SmartScout's own numbers (revenue, seller
+# count, etc.) drift over time, so "already scored" shouldn't mean
+# "scored once, ever" indefinitely.
+BRAND_STALE_DATA_DAYS = 90
+
 
 # ===========================================================================
 # Supplier Qualifier configuration
@@ -212,17 +235,27 @@ PREFERRED_SUPPLIER_GEOGRAPHY = [
 # format_supplier_rubric() so a weight change here changes actual behavior.
 # ---------------------------------------------------------------------------
 
+# "New-business/startup accessibility" added for a brand-new R&T, which has
+# no existing trading history or distributor relationships yet - whether a
+# candidate will actually work with a buyer in that position is a distinct
+# question from general wholesale quality (a candidate can be an excellent
+# supplier in general and still require 2 years in business or trade
+# references R&T can't yet provide). Funded by trimming points from
+# dimensions that matter less at this very first stage (catalog/data
+# integration and operational fulfillment fit matter more once R&T is
+# already buying from someone, not before the first distributor exists).
 SUPPLIER_SCORING_WEIGHTS = {
     "Brand authorization evidence": 20,
     "Marketplace/channel compatibility": 15,
     "Invoice and supply-chain defensibility": 15,
     "Account accessibility for R&T": 10,
-    "Business legitimacy and contact quality": 10,
-    "Catalog/data usability": 10,
+    "New-business/startup accessibility": 10,
     "Commercial terms and initial-order accessibility": 8,
-    "Geographic/service fit": 5,
-    "Operational fulfillment fit": 4,
-    "Risk profile": 3,
+    "Business legitimacy and contact quality": 9,
+    "Catalog/data usability": 6,
+    "Geographic/service fit": 3,
+    "Operational fulfillment fit": 2,
+    "Risk profile": 2,
 }
 
 assert sum(SUPPLIER_SCORING_WEIGHTS.values()) == 100, "SUPPLIER_SCORING_WEIGHTS weights must sum to 100"
