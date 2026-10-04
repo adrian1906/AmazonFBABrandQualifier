@@ -39,6 +39,7 @@ import brand_batch_link
 import input_loader
 import supplier_persistence
 from config import SUPPLIER_DEFAULT_CONCURRENCY
+from grow_distributor_master_list import grow_master_list
 from supplier_workflow import run_supplier_research_for_brand
 
 load_dotenv(override=True)
@@ -198,6 +199,18 @@ async def run_supplier_batch(
     print(f"\nBatch complete: {len(succeeded)} succeeded, {len(failed)} failed.")
     if failed:
         print("Failed brands:", ", ".join(failed))
+
+    # Closes the loop: SmartScout brands -> vet brands -> discover
+    # distributors -> vet distributors -> grow distributor_master_list.csv.
+    # Append-only (never modifies/removes an existing row) and deduped
+    # against what's already there - see grow_distributor_master_list.py.
+    all_relationships = [rel for r in succeeded for rel in r.relationships]
+    added = grow_master_list(all_relationships)
+    if added:
+        print(f"\nAdded {len(added)} new distributor(s) to distributor_master_list.csv:")
+        for row in added:
+            print(f"  - {row['Distributor']}")
+
     print(f"\nBatch id: {batch_id}")
     print(f"Next steps:\n  python supplier_report_cli.py --batch {batch_id}")
     print(f"  python supplier_review_one.py \"<company name or partial match>\"")

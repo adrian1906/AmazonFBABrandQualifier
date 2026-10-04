@@ -1,11 +1,11 @@
 """
-Local web UI for the R&T Brand/Supplier Qualifier.
+Local web UI for the R&T Brand/Distributor Qualifier.
 
 Run with:
     uv run streamlit run app.py
 
 Design principle: simple, bounded actions (viewing reports, approving one
-outreach draft, looking up a single brand or supplier) happen right here.
+outreach draft, looking up a single brand or distributor) happen right here.
 Long-running, expensive batch operations never run from a button click in
 this app - the Command Builder tab generates the exact CLI command for a
 human to run in a terminal instead (see gui_command_builder.py). Nothing in
@@ -22,8 +22,8 @@ import supplier_persistence
 from report import format_report
 from supplier_report import format_full_supplier_report, format_relationship_detail
 
-st.set_page_config(page_title="R&T Brand/Supplier Qualifier", layout="wide")
-st.title("R&T Brand/Supplier Qualifier")
+st.set_page_config(page_title="R&T Brand/Distributor Qualifier", layout="wide")
+st.title("R&T Brand/Distributor Qualifier")
 
 tab_reports, tab_review, tab_lookup, tab_commands = st.tabs(
     ["Reports", "Review Queue", "Single Lookup", "Command Builder"]
@@ -33,11 +33,11 @@ tab_reports, tab_review, tab_lookup, tab_commands = st.tabs(
 # Reports - read-only, no agent calls
 # ---------------------------------------------------------------------------
 with tab_reports:
-    st.subheader("Supplier Qualifier reports")
+    st.subheader("Distributor Qualifier reports")
     batch_ids = actions.list_supplier_batch_ids()
     col1, col2 = st.columns(2)
     with col1:
-        chosen_batch = st.selectbox("Supplier batch", ["(all)"] + batch_ids)
+        chosen_batch = st.selectbox("Distributor batch", ["(all)"] + batch_ids)
     with col2:
         brand_fragment = st.text_input("...or filter by brand name fragment", key="report_brand_fragment")
 
@@ -50,7 +50,7 @@ with tab_reports:
         rels = actions.list_supplier_relationships()
 
     if not rels:
-        st.info("No supplier relationships found yet - try a Single Lookup, or run a batch (see Command Builder).")
+        st.info("No distributor relationships found yet - try a Single Lookup, or run a batch (see Command Builder).")
     else:
         st.text(format_full_supplier_report(rels))
 
@@ -69,7 +69,7 @@ with tab_reports:
 # Review Queue - Approve / Edit / Regenerate / Reject
 # ---------------------------------------------------------------------------
 with tab_review:
-    sub_supplier, sub_brand = st.tabs(["Supplier relationships", "Brand results"])
+    sub_supplier, sub_brand = st.tabs(["Distributor relationships", "Brand results"])
 
     with sub_supplier:
         pending = actions.list_pending_supplier_relationships()
@@ -108,7 +108,13 @@ with tab_review:
                 if c4.button("Reject", key=f"s_reject_{idx}"):
                     st.info("Rejected - nothing was saved.")
             else:
-                st.info(f"No outreach was drafted (recommendation: {rel.assessment.recommendation}).")
+                st.info(f"No outreach drafted yet (recommendation: {rel.assessment.recommendation}). "
+                        "Outreach isn't auto-drafted for INVESTIGATE_FURTHER - draft it now if you've decided to pursue this one.")
+                if st.button("Draft outreach now", key=f"s_draft_{idx}", type="primary"):
+                    with st.spinner("Drafting outreach and evaluating..."):
+                        actions.regenerate_supplier_relationship(rel)
+                    st.success("Drafted.")
+                    st.rerun()
 
     with sub_brand:
         results = actions.list_brand_results()
@@ -142,12 +148,12 @@ with tab_review:
                 st.info("Rejected - nothing was saved.")
 
 # ---------------------------------------------------------------------------
-# Single Lookup - one brand or one supplier-research pass, bounded cost
+# Single Lookup - one brand or one distributor-research pass, bounded cost
 # ---------------------------------------------------------------------------
 with tab_lookup:
     st.caption("Each lookup here is one brand at a time - a handful of API calls, not a batch. "
                "For many brands at once, use the Command Builder tab instead.")
-    sub_b, sub_s = st.tabs(["Brand lookup", "Supplier lookup"])
+    sub_b, sub_s = st.tabs(["Brand lookup", "Distributor lookup"])
 
     with sub_b:
         company = st.text_input("Company/brand name")
@@ -164,8 +170,8 @@ with tab_lookup:
         brand = st.text_input("Brand name", key="s_brand")
         context = st.text_area("Context notes (optional)", key="s_context")
         live2 = st.checkbox("Use live web search (costs API credits)", value=True, key="supplier_live")
-        if st.button("Run Supplier Qualifier lookup", disabled=not brand.strip()):
-            with st.spinner(f"Researching suppliers for {brand}..."):
+        if st.button("Run Distributor Qualifier lookup", disabled=not brand.strip()):
+            with st.spinner(f"Researching distributors for {brand}..."):
                 result = actions.run_single_supplier_lookup(brand, context, live2)
             st.success(f"Found {len(result.relationships)} candidate(s) - saved. Also visible in the Review Queue tab.")
             for rel in result.relationships:
@@ -176,7 +182,7 @@ with tab_lookup:
 # ---------------------------------------------------------------------------
 with tab_commands:
     st.caption("These commands are never run automatically by this app - copy the box into your terminal.")
-    sub1, sub2, sub3, sub4 = st.tabs(["Brand batch", "Supplier batch", "Resume / Reports", "Review from terminal"])
+    sub1, sub2, sub3, sub4 = st.tabs(["Brand batch", "Distributor batch", "Resume / Reports", "Review from terminal"])
 
     with sub1:
         csv_path = st.text_input("CSV path", value="sample_smartscout_export.csv", key="bb_csv")
@@ -229,7 +235,7 @@ with tab_commands:
     with sub3:
         st.markdown("**Resume a batch**")
         batch_ids = actions.list_supplier_batch_ids()
-        batch_id = st.selectbox("Supplier batch id", batch_ids, key="resume_batch") if batch_ids else st.text_input("Supplier batch id", key="resume_batch_manual")
+        batch_id = st.selectbox("Distributor batch id", batch_ids, key="resume_batch") if batch_ids else st.text_input("Distributor batch id", key="resume_batch_manual")
         resume_conc = st.number_input("Concurrency", min_value=1, value=5, step=1, key="resume_conc")
         rcmd, rexp = cmd.supplier_resume_command(batch_id, resume_conc)
         st.code(rcmd, language="bash")
@@ -246,8 +252,8 @@ with tab_commands:
         st.caption(rep_exp)
 
     with sub4:
-        st.markdown("**Review a supplier relationship from the terminal instead of this app**")
-        frag_s = st.text_input("Brand/supplier name fragment", key="cli_review_supplier")
+        st.markdown("**Review a distributor relationship from the terminal instead of this app**")
+        frag_s = st.text_input("Brand/distributor name fragment", key="cli_review_supplier")
         c1, e1 = cmd.supplier_review_command(frag_s or "<fragment>")
         st.code(c1, language="bash")
         st.caption(e1)

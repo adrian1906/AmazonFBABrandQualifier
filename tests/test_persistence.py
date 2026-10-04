@@ -6,8 +6,11 @@ company name fragment - the common case, and the exact usage documented in
 review_one.py's own docstring - never matched its own saved file.
 """
 
+import json
+from datetime import datetime, timedelta
+
 from models import Prospect, ResearchFindings, QualificationResult, OutreachDraft, ManagerDecision, DraftScore
-from persistence import save_result, find_results
+from persistence import save_result, find_results, scored_company_names, result_to_dict, _slugify
 from workflow import WorkflowResult
 
 
@@ -45,3 +48,71 @@ def test_find_results_still_matches_single_word_fragment(tmp_path):
     result = _make_result("Diamine")
     save_result(result, directory=tmp_path)
     assert len(find_results("diamine", directory=tmp_path)) == 1
+
+
+def test_scored_company_names_reflects_saved_results(tmp_path):
+    save_result(_make_result("Diamine"), directory=tmp_path)
+    save_result(_make_result("Towa"), directory=tmp_path)
+
+    names = scored_company_names(directory=tmp_path)
+
+    assert "diamine" in names
+    assert "towa" in names
+    assert "unrelated company" not in names
+
+
+def test_scored_company_names_matches_regardless_of_case_or_punctuation(tmp_path):
+    save_result(_make_result("Northwind Outdoor Gear Co."), directory=tmp_path)
+
+    names = scored_company_names(directory=tmp_path)
+
+    from entity_resolution import normalize_company_name
+    assert normalize_company_name("northwind outdoor gear co") in names
+
+
+def test_scored_company_names_empty_directory(tmp_path):
+    assert scored_company_names(directory=tmp_path / "does_not_exist") == set()
+
+
+def _save_result_at(result: WorkflowResult, directory, when: datetime) -> None:
+    """Writes a saved-result file with an explicit (possibly backdated)
+    filename timestamp, bypassing save_result()'s datetime.now() stamping -
+    for testing staleness, which real saves can't control."""
+    directory.mkdir(exist_ok=True)
+    stamp = when.strftime("%Y%m%d_%H%M%S")
+    path = directory / f"{_slugify(result.prospect.company_name)}_{stamp}.json"
+    path.write_text(json.dumps(result_to_dict(result), indent=2), encoding="utf-8")
+
+
+def test_scored_company_names_excludes_stale_result(tmp_path):
+    from entity_resolution import normalize_company_name
+
+    old = datetime.now() - timedelta(days=200)
+    _save_result_at(_make_result("Old News Co"), tmp_path, old)
+    key = normalize_company_name("Old News Co")
+
+    assert key not in scored_company_names(directory=tmp_path, max_age_days=90)
+    # No max_age_days at all - the old default behavior - still counts it.
+    assert key in scored_company_names(directory=tmp_path)
+
+
+def test_scored_company_names_includes_fresh_result_within_window(tmp_path):
+    from entity_resolution import normalize_company_name
+
+    recent = datetime.now() - timedelta(days=10)
+    _save_result_at(_make_result("Fresh Co"), tmp_path, recent)
+
+    assert normalize_company_name("Fresh Co") in scored_company_names(directory=tmp_path, max_age_days=90)
+
+
+def test_scored_company_names_uses_newest_result_per_company(tmp_path):
+    from entity_resolution import normalize_company_name
+
+    # An old save and a fresh save for the SAME company - the fresh one
+    # should win, so the company still counts as scored.
+    old = datetime.now() - timedelta(days=200)
+    recent = datetime.now() - timedelta(days=5)
+    _save_result_at(_make_result("Re-Scored Co"), tmp_path, old)
+    _save_result_at(_make_result("Re-Scored Co"), tmp_path, recent)
+
+    assert normalize_company_name("Re-Scored Co") in scored_company_names(directory=tmp_path, max_age_days=90)

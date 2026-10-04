@@ -83,7 +83,7 @@ def supplier_batch_command(
 
     command = " ".join(parts)
     explanation = (
-        f"Runs the Supplier Qualifier for {source_desc}, {concurrency} brand(s) at a time"
+        f"Runs the Distributor Qualifier for {source_desc}, {concurrency} brand(s) at a time"
         f"{', limited to the first ' + str(limit) + ' selected' if limit else ''}"
         f"{' - cache/offline only, no paid calls' if dry_run else ''}"
         f"{' - WebSearchTool disabled' if no_web_search and not dry_run else ''}. "
@@ -108,7 +108,7 @@ def supplier_report_command(batch_id: str = "", brand_fragment: str = "", save: 
     parts = ["python", "supplier_report_cli.py"]
     if batch_id:
         parts += ["--batch", _quote(batch_id)]
-        target = f"supplier batch {batch_id}"
+        target = f"distributor batch {batch_id}"
     else:
         parts += ["--brand", _quote(brand_fragment)]
         target = f"brands matching {brand_fragment!r}"
@@ -126,7 +126,7 @@ def supplier_report_command(batch_id: str = "", brand_fragment: str = "", save: 
 def supplier_review_command(fragment: str) -> tuple[str, str]:
     command = f"python supplier_review_one.py {_quote(fragment)}"
     explanation = (
-        f"Opens the interactive APPROVE / EDIT / REGENERATE / REJECT gate for the saved supplier "
+        f"Opens the interactive APPROVE / EDIT / REGENERATE / REJECT gate for the saved distributor "
         f"relationship matching {fragment!r} - equivalent to using the Review Queue tab in this app, "
         "just from the terminal."
     )

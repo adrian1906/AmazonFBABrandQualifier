@@ -10,8 +10,14 @@ dependencies = [
     # win32api"). This project never uses MCP tools at all - only Agent,
     # Runner, trace, and WebSearchTool - so pinning here costs nothing.
     "openai-agents==0.15.1",
+    # openai 2.45+ made InputTokensDetails.cache_write_tokens required, but
+    # openai-agents 0.15.1 still builds it with only cached_tokens=0, so every
+    # Runner.run() crashes with a pydantic ValidationError. Cap until the
+    # agents SDK is upgraded past that.
+    "openai<2.45",
     "pydantic>=2.13.3",
     "python-dotenv>=1.2.2",
+    "requests>=2.32.0",
     "streamlit>=1.64.0",
 ]
 

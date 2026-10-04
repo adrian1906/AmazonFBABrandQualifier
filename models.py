@@ -267,6 +267,24 @@ class SupplierCandidate(BaseModel):
     freight_threshold: Optional[str] = None
     credit_requirements: Optional[str] = None
 
+    # Whether a buyer with NO existing trading history / no established
+    # retail relationships could realistically open an account here - added
+    # for a brand-new R&T, which has neither yet. Evidence-graded like
+    # everything else: only set from what's explicitly stated (a wholesale
+    # application page, FAQ, "who we work with" section, etc.), never
+    # inferred from a low opening order alone.
+    requires_minimum_years_in_business: Optional[str] = Field(
+        default=None, description="What's explicitly stated about a minimum business age to qualify, if anything was found"
+    )
+    requires_trade_references: YesNoUnknown = "unknown"
+    requires_credit_application: YesNoUnknown = "unknown"
+    new_business_accessible: YesNoUnknown = Field(
+        default="unknown",
+        description="Whether a brand-new business with no trading history could realistically open an account, "
+                     "based only on explicitly stated requirements - never assumed from the absence of a stated barrier",
+    )
+    new_business_accessibility_notes: Optional[str] = None
+
     catalog_data_formats: list[str] = Field(
         default_factory=list, description="e.g. 'price list PDF', 'UPC/GTIN spreadsheet', 'API', 'EDI', 'product feed'"
     )

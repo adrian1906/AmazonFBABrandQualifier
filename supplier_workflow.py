@@ -14,7 +14,7 @@ one brand at a time.
        |
     supplier_scoring.assess_candidate  <- deterministic weights + hard gates (plain Python)
        |
-    (CONTACT_NOW / INVESTIGATE_FURTHER only)
+    (CONTACT_NOW only - see note below)
        |
     +-----------------------------+
     |              |              |
@@ -287,9 +287,18 @@ async def run_supplier_research_for_brand(
     """
     Run the full Supplier Qualifier pipeline for one brand: Research
     (+ targeted escalation) -> entity resolution -> Qualification -> scoring
-    + gates -> (for CONTACT_NOW / INVESTIGATE_FURTHER only) outreach drafts
-    + manager evaluation. Persists results via supplier_persistence and
-    returns a SupplierWorkflowResult for reporting/approval.
+    + gates -> (for CONTACT_NOW only) outreach drafts + manager evaluation.
+    Persists results via supplier_persistence and returns a
+    SupplierWorkflowResult for reporting/approval.
+
+    Outreach is deliberately NOT auto-drafted for INVESTIGATE_FURTHER: in
+    practice most INVESTIGATE_FURTHER candidates (missing info, unresolved
+    questions) are never actually pursued, so drafting 3 emails + a manager
+    evaluation for every one of them mostly went to waste - cost the user
+    actually traced and asked to cut. A human can still draft outreach for
+    a specific INVESTIGATE_FURTHER candidate at any time via REGENERATE
+    (supplier_approval.py / the GUI's Review Queue) once they've decided
+    it's worth pursuing - this only changes what happens automatically.
     """
     run_id = supplier_persistence.new_run_id()
     cache_hit = False
@@ -344,7 +353,7 @@ async def run_supplier_research_for_brand(
 
             drafts: dict[str, OutreachDraft] = {}
             manager_decision: ManagerDecision | None = None
-            if assessment.recommendation in ("CONTACT_NOW", "INVESTIGATE_FURTHER"):
+            if assessment.recommendation == "CONTACT_NOW":
                 drafts = await _generate_supplier_outreach_drafts(brand_name, assessment)
                 if drafts:
                     manager_decision = await _evaluate_drafts(drafts)

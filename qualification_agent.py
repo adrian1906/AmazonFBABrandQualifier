@@ -15,7 +15,7 @@ enhancements") and this agent must not imply otherwise.
 
 from agents import Agent
 
-from config import MODEL_NAME, AI_RESTRICTIONS, QUALIFICATION_CATEGORIES
+from config import QUALIFICATION_MODEL_NAME, AI_RESTRICTIONS, QUALIFICATION_CATEGORIES
 from models import QualificationResult
 
 _categories_text = "\n".join(f"- {c}" for c in QUALIFICATION_CATEGORIES)
@@ -58,6 +58,6 @@ facts.
 qualification_agent = Agent(
     name="Qualification Agent",
     instructions=INSTRUCTIONS,
-    model=MODEL_NAME,
+    model=QUALIFICATION_MODEL_NAME,
     output_type=QualificationResult,
 )

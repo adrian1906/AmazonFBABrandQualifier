@@ -32,12 +32,14 @@ OUTBOX_DIR = Path(__file__).parent / "outbox"
 VALID_CHOICES = {"approve", "edit", "regenerate", "reject"}
 
 
-def _prompt_choice() -> str:
+def _prompt_choice(allowed: set[str] | None = None) -> str:
+    allowed = allowed or VALID_CHOICES
+    label = " / ".join(c.upper() for c in sorted(allowed))
     while True:
-        raw = input("\nYour decision [APPROVE / EDIT / REGENERATE / REJECT]: ").strip().lower()
-        if raw in VALID_CHOICES:
+        raw = input(f"\nYour decision [{label}]: ").strip().lower()
+        if raw in allowed:
             return raw
-        print(f"Please type one of: APPROVE, EDIT, REGENERATE, REJECT (got: {raw!r})")
+        print(f"Please type one of: {label} (got: {raw!r})")
 
 
 def _prompt_multiline(label: str) -> str:
@@ -82,16 +84,31 @@ async def run_supplier_approval_gate(rel: BrandSupplierRelationship) -> BrandSup
     loop for one brand<->supplier relationship. Returns the (possibly
     updated) relationship; the caller is responsible for nothing further -
     APPROVE/REGENERATE already persist via supplier_persistence.
+
+    The automatic pipeline only auto-drafts outreach for CONTACT_NOW (see
+    supplier_workflow.py) - most INVESTIGATE_FURTHER candidates never get
+    pursued, so drafting for all of them mostly went to waste. An
+    INVESTIGATE_FURTHER candidate can still arrive here with no draft yet;
+    REGENERATE drafts it for the first time rather than re-doing one.
+    Anything else with no draft (DO_NOT_PURSUE, or an unexpected gap) has
+    nothing actionable here and short-circuits immediately, same as before.
     """
     while True:
         print("\n" + format_relationship_detail(rel))
 
-        if not rel.outreach_drafts or not rel.manager_decision:
+        has_drafts = bool(rel.outreach_drafts and rel.manager_decision)
+        can_draft_now = rel.assessment.recommendation == "INVESTIGATE_FURTHER"
+
+        if not has_drafts and not can_draft_now:
             print(f"\nNo outreach was drafted for this candidate (recommendation: {rel.assessment.recommendation}).")
             print("Nothing to approve here - see the do-not-pursue / missing-information reports instead.")
             return rel
 
-        choice = _prompt_choice()
+        if not has_drafts:
+            print(f"\nNo outreach drafted yet (recommendation: {rel.assessment.recommendation}).")
+            choice = _prompt_choice({"regenerate", "reject"})
+        else:
+            choice = _prompt_choice()
 
         if choice == "approve":
             path = save_approved_outreach(rel)

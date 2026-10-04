@@ -33,3 +33,35 @@ ENV/
 .ruff_cache/
 
 .DS_Store
+
+# Runtime-generated output - directory structure tracked via .gitkeep,
+# contents are not (user-specific research data, batch results, drafts,
+# printable reports). See README.md's data-flow sections for what each
+# holds.
+/batch_results/*
+!/batch_results/.gitkeep
+/batch_reports/
+/outbox/*
+!/outbox/.gitkeep
+/supplier_reports/*
+!/supplier_reports/.gitkeep
+/supplier_data/entity_index.json
+/supplier_data/batches/*
+!/supplier_data/batches/.gitkeep
+/supplier_data/cache/*
+!/supplier_data/cache/.gitkeep
+/supplier_data/relationships/*
+!/supplier_data/relationships/.gitkeep
+/supplier_data/runs/*
+!/supplier_data/runs/.gitkeep
+/supplier_data/suppliers/*
+!/supplier_data/suppliers/.gitkeep
+
+# Generated document exports / Office lock files
+README.docx
+~$*.docx
+
+# Real business data (distributor lists, SmartScout exports) - keep local,
+# not project source. The fictional sample fixture stays tracked.
+*.csv
+!sample_smartscout_export.csv
