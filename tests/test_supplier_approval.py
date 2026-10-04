@@ -7,7 +7,9 @@ advances on an explicit human APPROVE - never automatically.
 import inspect
 
 import supplier_approval
-from tests.factories import make_relationship
+from models import DraftScore, ManagerDecision, OutreachDraft
+from tests.factories import make_candidate, make_qualification, make_relationship
+from tests.helpers import patch_runner
 
 
 def _queue_input(monkeypatch, responses):
@@ -55,6 +57,50 @@ async def test_no_outreach_drafted_means_nothing_to_approve(monkeypatch):
     rel = make_relationship(with_outreach=False)
     # No input() should even be needed - the gate should short-circuit.
     monkeypatch.setattr("builtins.input", lambda *a, **k: (_ for _ in ()).throw(AssertionError("input() should not be called")))
+
+    result = await supplier_approval.run_supplier_approval_gate(rel)
+    assert result.outreach_drafts == {}
+
+
+async def test_investigate_further_without_outreach_offers_regenerate(monkeypatch):
+    # score=50 -> weighted final_score=50, between the INVESTIGATE_FURTHER (40)
+    # and CONTACT_NOW (70) thresholds, with no hard gates fired by this
+    # candidate's defaults (VERIFIED authorization, PERMITTED Amazon).
+    candidate = make_candidate()
+    qualification = make_qualification(candidate.legal_business_name, score=50)
+    rel = make_relationship(candidate=candidate, qualification=qualification, with_outreach=False)
+    assert rel.assessment.recommendation == "INVESTIGATE_FURTHER"
+    assert rel.outreach_drafts == {}
+
+    responses = {
+        "Supplier Relationship Outreach Agent": OutreachDraft(subject="Hi", body="Body", strategy="relationship"),
+        "Supplier Procurement Outreach Agent": OutreachDraft(subject="Hi", body="Body", strategy="procurement"),
+        "Supplier Strategic Partnership Outreach Agent": OutreachDraft(subject="Hi", body="Body", strategy="partnership"),
+        "Outreach Manager": ManagerDecision(
+            draft_scores=[DraftScore(strategy=s, score=80, explanation="ok") for s in ("relationship", "procurement", "partnership")],
+            winning_strategy="procurement", winning_reason="best",
+        ),
+    }
+    patch_runner(monkeypatch, responses)
+    _queue_input(monkeypatch, ["regenerate", "approve"])
+
+    result = await supplier_approval.run_supplier_approval_gate(rel)
+
+    assert result.outreach_drafts  # drafted for the first time, not re-drafted
+    assert result.lifecycle_state == "CONTACT_APPROVED"
+
+
+async def test_investigate_further_prompt_rejects_approve_before_a_draft_exists(monkeypatch):
+    rel = make_relationship(
+        candidate=make_candidate(),
+        qualification=make_qualification("Acme Wholesale LLC", score=50),
+        with_outreach=False,
+    )
+    assert rel.assessment.recommendation == "INVESTIGATE_FURTHER"
+    # "approve" isn't a valid choice yet (nothing drafted to approve) - the
+    # prompt must re-ask rather than accept it, so "reject" is what actually
+    # gets consumed next.
+    _queue_input(monkeypatch, ["approve", "reject"])
 
     result = await supplier_approval.run_supplier_approval_gate(rel)
     assert result.outreach_drafts == {}

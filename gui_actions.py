@@ -101,10 +101,16 @@ def list_supplier_relationships() -> list[BrandSupplierRelationship]:
 
 
 def list_pending_supplier_relationships() -> list[BrandSupplierRelationship]:
-    """Relationships that have a drafted outreach and haven't been contacted yet."""
+    """Relationships ready for a human decision: already-drafted outreach
+    awaiting approval, or an INVESTIGATE_FURTHER candidate that hasn't been
+    drafted yet - the automatic pipeline only auto-drafts for CONTACT_NOW
+    (see supplier_workflow.py), so an INVESTIGATE_FURTHER candidate needs to
+    show up here too, with a "draft it now" option, rather than being
+    invisible until someone remembers to look at the Reports tab."""
     return [
         r for r in list_supplier_relationships()
-        if r.outreach_drafts and r.lifecycle_state in ("DISCOVERED", "RESEARCHED")
+        if r.lifecycle_state in ("DISCOVERED", "RESEARCHED")
+        and (r.outreach_drafts or r.assessment.recommendation == "INVESTIGATE_FURTHER")
     ]
 
 

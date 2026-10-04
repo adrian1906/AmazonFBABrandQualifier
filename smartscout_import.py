@@ -26,9 +26,9 @@ from models import Prospect
 # canonical_field -> list of header names (case-insensitive) that might
 # appear in a real export. Add to these lists once you see your real file.
 COLUMN_ALIASES: dict[str, list[str]] = {
-    "company_name": ["Brand", "Brand Name", "Company", "Company Name", "Seller Name"],
+    "company_name": ["Brand", "Brand Name", "Company", "Company Name", "Seller Name", "Distributor"],
     "website": ["Website", "Brand Website", "URL", "Domain"],
-    "category": ["Category", "Subcategory", "Amazon Category"],
+    "category": ["Category", "Subcategory", "Amazon Category", "Primary Categories"],
     "seller_count": ["Seller Count", "Number of Sellers", "# Sellers", "Total Sellers", "Sellers"],
     "amazon_is_seller": ["Amazon Sells", "Amazon Is Seller", "Amazon Seller", "Sold by Amazon", "Amazon Competes"],
     "asin_count": ["Number of ASINs", "ASIN Count", "# ASINs", "ASINs"],

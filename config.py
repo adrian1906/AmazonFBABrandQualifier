@@ -18,12 +18,36 @@ configuration.
 
 import os
 from dotenv import load_dotenv
+from agents import set_tracing_disabled
 
 load_dotenv(override=True)
+
+# Disabled at the user's request - the per-run trace at
+# platform.openai.com/traces (every `with trace(...)` in workflow.py /
+# supplier_workflow.py) wasn't considered useful enough to keep. This is a
+# one-time global toggle: `trace(...)` calls everywhere else in the project
+# become no-ops once this runs, so nothing else needed to change. Set once
+# here (config.py is imported by every agent module) rather than repeated
+# in each entry point. Tests disable it independently in conftest.py, for
+# the same reason plus avoiding a real network call during mocked runs.
+set_tracing_disabled(True)
 
 # Same convention as agents/2_openai/deep_research/search_agent.py:
 # allow overriding the model via an env var, default to a small/cheap model.
 MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "gpt-5.4-mini")
+
+# Used only by qualification_agent.py and supplier_qualification_agent.py -
+# the two agents whose raw per-dimension scores feed directly into the hard
+# gates in supplier_scoring.py (and, on the brand side, the PURSUE/
+# INVESTIGATE/HOLD/REJECT call that decides what even reaches Stage 2).
+# They apply nuanced conditional rules ("a DISTRIBUTOR_CLAIM alone should
+# score no higher than moderate", "UNKNOWN should score low, not neutral")
+# where a stronger model's judgment has the most downstream consequence.
+# Deliberately NOT applied everywhere - research, drafting, and the
+# outreach manager stay on MODEL_NAME, since this model costs ~3.3x more
+# per token and a blanket upgrade would undo the cost cut from gating
+# outreach drafting to CONTACT_NOW only (see supplier_workflow.py).
+QUALIFICATION_MODEL_NAME = os.getenv("QUALIFICATION_MODEL_NAME", "gpt-5.4")
 
 
 # ---------------------------------------------------------------------------

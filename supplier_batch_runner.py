@@ -226,7 +226,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", help="Re-research only failed/stale brands from an existing supplier batch id")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N selected brands (useful for a cheap test run)")
     parser.add_argument("--concurrency", type=int, default=SUPPLIER_DEFAULT_CONCURRENCY)
-    parser.add_argument("--no-web-search", action="store_true", help="Disable WebSearchTool; rely only on cache/manual notes")
+    parser.add_argument("--no-web-search", action="store_true", help="Disable web search (Tavily); rely only on cache/manual notes")
     parser.add_argument("--dry-run", action="store_true", help="Use cached research only - no paid research calls")
     return parser.parse_args()
 

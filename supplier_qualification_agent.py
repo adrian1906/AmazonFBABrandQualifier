@@ -15,7 +15,7 @@ further here because the gates are non-negotiable (correctness/compliance),
 not merely a matter of scoring judgment.
 """
 
-from agents import Agent
+from agents import Agent, AgentOutputSchema
 
 from config import MODEL_NAME, AI_RESTRICTIONS, SUPPLIER_SCORING_WEIGHTS, format_supplier_rubric
 from models import SupplierQualificationResult
@@ -76,6 +76,26 @@ given, not on what would typically be true for a company like this.
 supplier_qualification_agent = Agent(
     name="Supplier Qualification Agent",
     instructions=INSTRUCTIONS,
+    # Deliberately MODEL_NAME (mini), not QUALIFICATION_MODEL_NAME, despite
+    # this being exactly the kind of judgment-heavy agent that upgrade
+    # targets. Verified gpt-5.4 against this agent's real dict[str, int]
+    # dimension_scores output and found it anchors on the rubric's WEIGHT
+    # numbers (20, 15, 15, 10...) instead of giving independent 0-100
+    # scores - reproduced on a real strongly-evidenced candidate
+    # (Herbamax/NutriMagic) that mini scored correctly (98, 95...) and
+    # gpt-5.4 scored 20, 14, 13... despite its own rationale describing the
+    # same candidate as excellent. mini does not exhibit this. Revisit if
+    # dimension_scores is ever reshaped away from a bare dict (e.g. a fixed
+    # per-dimension model like qualification_agent.py's QualificationResult,
+    # which tested correctly under gpt-5.4).
     model=MODEL_NAME,
-    output_type=SupplierQualificationResult,
+    # SupplierQualificationResult.dimension_scores is a dict[str, int] keyed
+    # by the (space/slash-containing, not-valid-as-field-names) dimension
+    # names in config.SUPPLIER_SCORING_WEIGHTS. OpenAI's strict structured-
+    # output mode requires a fixed, named set of properties and rejects an
+    # open-ended dict - "Strict JSON schema is enabled, but the output type
+    # is not valid." Disabling strict mode for just this output type is the
+    # fix the SDK's own error message suggests; every other agent's output
+    # type is a fixed-field model and stays strict.
+    output_type=AgentOutputSchema(SupplierQualificationResult, strict_json_schema=False),
 )

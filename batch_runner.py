@@ -141,7 +141,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--csv", required=True, help="Path to a SmartScout-style CSV export")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N rows (useful for a cheap test run)")
     parser.add_argument("--concurrency", type=int, default=5, help="Max brands processed in parallel (default: 5)")
-    parser.add_argument("--no-web-search", action="store_true", help="Disable WebSearchTool; rely only on the CSV/manual notes")
+    parser.add_argument("--no-web-search", action="store_true", help="Disable web search (Tavily); rely only on the CSV/manual notes")
     return parser.parse_args()
 
 
