@@ -7,11 +7,16 @@ review_one.py does), so it costs nothing to run or re-run.
 If a company was run more than once (a test run plus the full batch, say),
 only its newest saved result is included.
 
+Defaults to labeling everything "Brand" (title, column header, print output)
+since that's what this script is for - pass --label Distributor when
+reviewing a distributor_master_list.csv-sourced batch instead, where the
+companies are distributors, not product brands.
+
 Usage:
     python batch_report_md.py                     # all results -> batch_reports/review_<timestamp>.md
     python batch_report_md.py --all-drafts        # also print the two non-winning email drafts
     python batch_report_md.py --since 20260920    # only result files saved on/after that date (YYYYMMDD)
-    python batch_report_md.py --names-csv distributor_master_list.csv   # only these companies
+    python batch_report_md.py --names-csv distributor_master_list.csv --label Distributor   # only these companies
     python batch_report_md.py --output my_review.md
 """
 
@@ -154,13 +159,13 @@ def _company_section(rank: int, result: WorkflowResult, all_drafts: bool) -> str
     return "\n".join(lines)
 
 
-def build_markdown(results: list[WorkflowResult], all_drafts: bool) -> str:
+def build_markdown(results: list[WorkflowResult], all_drafts: bool, label: str = "Brand") -> str:
     header = [
-        f"# {_COMPANY_NAME} — Distributor Review",
+        f"# {_COMPANY_NAME} — {label} Review",
         "",
-        f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} · {len(results)} distributor(s), ranked by qualification score",
+        f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} · {len(results)} {label.lower()}(s), ranked by qualification score",
         "",
-        "| Rank | Distributor | Score | Recommendation | Winning email style |",
+        f"| Rank | {label} | Score | Recommendation | Winning email style |",
         "|---|---|---|---|---|",
     ]
     for i, r in enumerate(results, start=1):
@@ -178,6 +183,8 @@ def main() -> None:
     parser.add_argument("--names-csv", help="Only include companies listed in this CSV (e.g. distributor_master_list.csv) - "
                                              "use this to scope the review to one specific batch instead of everything ever saved")
     parser.add_argument("--dir", default=str(RESULTS_DIR), help="Folder of saved results (default: batch_results/)")
+    parser.add_argument("--label", default="Brand", help="What these companies are, for the title/column header "
+                                                           "(default: Brand - pass e.g. 'Distributor' when reviewing distributor_master_list.csv)")
     args = parser.parse_args()
 
     directory = Path(args.dir)
@@ -196,9 +203,9 @@ def main() -> None:
     else:
         REPORTS_DIR.mkdir(exist_ok=True)
         path = REPORTS_DIR / f"review_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-    path.write_text(build_markdown(results, args.all_drafts), encoding="utf-8")
+    path.write_text(build_markdown(results, args.all_drafts, args.label), encoding="utf-8")
 
-    print(f"Wrote {len(results)} distributor(s) to {path}")
+    print(f"Wrote {len(results)} {args.label.lower()}(s) to {path}")
     if skipped:
         print(f"({skipped} older duplicate result file(s) skipped - only the newest per company is included.)")
 
