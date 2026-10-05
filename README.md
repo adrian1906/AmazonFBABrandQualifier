@@ -18,6 +18,13 @@ standalone repository as its own product.
    and is that supply path usable for Amazon resale?") - the Version 2
    addition. See [Supplier Qualifier](#supplier-qualifier-stage-2) below.
 
+Around those two stages sits a small toolkit for running this repeatedly
+without re-deriving the process each time or accidentally re-paying for
+work already done: SmartScout import/merge/filter helpers, a self-growing
+distributor reference list, printable review documents, and OpenAI cost
+tracking - each covered where it's used below, or all together under
+[Supporting tooling](#supporting-tooling).
+
 Both stages share the same architecture, conventions, and hard rule:
 **public web research is not the same thing as approval to purchase or
 resell on Amazon.** Nothing in either stage assumes brand authorization or
@@ -110,18 +117,30 @@ Relationship   Procurement   Partnership     <- run independently, concurrently
             Approved Draft        <- saved to outbox/, never auto-sent
 ```
 
-| Agent | File | Output type |
-|---|---|---|
-| Brand Research Agent | [`research_agent.py`](research_agent.py) | `ResearchFindings` |
-| Qualification Agent | [`qualification_agent.py`](qualification_agent.py) | `QualificationResult` |
-| Relationship / Procurement / Partnership Outreach Agents | [`outreach_agents.py`](outreach_agents.py) | `OutreachDraft` |
-| Outreach Manager | [`outreach_manager.py`](outreach_manager.py) | `ManagerDecision` |
+| Agent | File | Output type | Model |
+|---|---|---|---|
+| Brand Research Agent | [`research_agent.py`](research_agent.py) | `ResearchFindings` | `config.MODEL_NAME` (cheap/fast) |
+| Qualification Agent | [`qualification_agent.py`](qualification_agent.py) | `QualificationResult` | `config.QUALIFICATION_MODEL_NAME` (stronger) |
+| Relationship / Procurement / Partnership Outreach Agents | [`outreach_agents.py`](outreach_agents.py) | `OutreachDraft` | `config.MODEL_NAME` |
+| Outreach Manager | [`outreach_manager.py`](outreach_manager.py) | `ManagerDecision` | `config.MODEL_NAME` |
+
+The Qualification Agent alone runs on a separate, stronger model
+(`QUALIFICATION_MODEL_NAME`, defaults to `gpt-5.4` vs. `MODEL_NAME`'s
+`gpt-5.4-mini`) - a deliberate, narrow upgrade: its raw score is what
+decides `PURSUE`/`INVESTIGATE`/`HOLD`/`REJECT`, so a wrong judgment there
+has the most downstream consequence, while research and drafting don't
+need the stronger (pricier) model. The Supplier Qualification Agent
+(Stage 2) was tested against the same upgrade and deliberately **not**
+given it - see [Known limitations (Supplier Qualifier)](#known-limitations-supplier-qualifier)
+below for why.
 
 Supporting (non-agent) modules: [`smartscout_import.py`](smartscout_import.py)
 (CSV → `Prospect` list), [`batch_runner.py`](batch_runner.py) (run many
-prospects unattended), [`persistence.py`](persistence.py) (save/load a full
-result as JSON), [`review_one.py`](review_one.py) (reload one saved result
-into the approval gate).
+prospects unattended, skipping brands already scored - see
+[Batch mode](#batch-mode-importing-a-smartscout-export) below),
+[`persistence.py`](persistence.py) (save/load a full result as JSON,
+including the already-scored lookup), [`review_one.py`](review_one.py)
+(reload one saved result into the approval gate).
 
 All Pydantic models are in [`models.py`](models.py). The shared R&T
 company profile, AI restrictions, and scoring rubric weights live in
@@ -138,11 +157,17 @@ below). The three outreach agents run concurrently via `asyncio.gather()`
 against identical input, which is what guarantees they're truly
 independent — none of them can see another's draft.
 
-The whole run is wrapped in `with trace(...)`, so each run shows up as a
-named trace at <https://platform.openai.com/traces>. You can see which
-agent ran, its input/output, any tool calls (e.g. `WebSearchTool`), and how
-long each step took. No API keys are ever printed to the console or
-included in trace output by this code.
+The whole run is wrapped in `with trace(...)`, which would otherwise make
+each run show up as a named trace at <https://platform.openai.com/traces>
+(which agent ran, its input/output, any tool calls, how long each step
+took). **Tracing is currently disabled** (`set_tracing_disabled(True)` in
+`config.py`) - at the user's request, since it wasn't considered useful
+enough to keep and it also removed a flaky network call that occasionally
+surfaced as a `[non-fatal] Tracing: request failed` warning during batch
+runs. The `with trace(...)` calls are harmless no-ops as a result; no code
+needed to change to turn this back on, just remove that one line. No API
+keys are ever printed to the console or included in trace output by this
+code, whether tracing is on or off.
 
 ## Setup
 
@@ -191,6 +216,16 @@ ranked `batch_results/summary_<timestamp>.csv` you can scan in Excel/Sheets.
 It does **not** show the interactive approval prompt per company — that
 doesn't scale to 100 brands.
 
+**Already-scored brands are skipped by default.** `persistence.scored_company_names()`
+checks every saved result before spending anything, so re-running this
+against a CSV that overlaps a previous run — e.g. after merging a new
+SmartScout export with an old one — doesn't silently re-pay to re-score
+brands already on file. A brand only counts as "already scored" if its
+newest saved result is within `config.BRAND_STALE_DATA_DAYS` (default 90
+days) — older than that, SmartScout's own numbers have likely drifted, so
+it's processed again rather than skipped forever. Pass `--rescore` to
+process every row regardless of age.
+
 Once you've picked a promising company from the summary, review and
 approve it individually — with no further API calls unless you choose
 REGENERATE:
@@ -198,6 +233,32 @@ REGENERATE:
 ```
 python review_one.py "company name fragment"
 ```
+
+### Preparing the input CSV: merging and narrowing SmartScout exports
+
+Two small, free (no API calls), local tools for building that input CSV
+from scratch or from multiple pulls over time:
+
+```
+# Combine multiple SmartScout exports (same column schema) into one
+# deduplicated file - the newest file wins when the same brand appears twice
+python merge_smartscout_exports.py --csv export_jan.csv --csv export_mar.csv -o merged.csv
+
+# Narrow a brand export down to replenishable product families BEFORE
+# paying for Stage 1 - see WORKFLOW.md for the full reasoning and the
+# ranked category list this implements
+python filter_smartscout_categories.py --list-categories
+python filter_smartscout_categories.py --csv merged.csv --category office_products
+python filter_smartscout_categories.py --csv merged.csv --category office_products --append-distributors distributor_master_list.csv
+```
+
+`--append-distributors` adds rows from a `distributor_master_list.csv`-shaped
+file (see [Supplier Qualifier](#supplier-qualifier-stage-2) below) onto the
+*end* of the filtered output, after the keyword filter runs rather than
+through it — a hand-curated distributor list is a different kind of
+candidate (already vetted, carries many categories) than an
+undifferentiated product-brand export, so it shouldn't be subject to the
+same product-keyword narrowing.
 
 **On SmartScout's column names**: [`smartscout_import.py`](smartscout_import.py)'s
 `COLUMN_ALIASES` dict is a best-effort guess at SmartScout's export headers
@@ -216,7 +277,17 @@ Copy [`.env.example`](.env.example) to `.env` and fill it in:
 
 - `OPENAI_API_KEY` — required. Used for all agent calls and for
   `WebSearchTool` (no separate search API key needed).
-- `DEFAULT_MODEL_NAME` — optional, defaults to `gpt-5.4-mini`.
+- `DEFAULT_MODEL_NAME` — optional, defaults to `gpt-5.4-mini`. Sets
+  `config.MODEL_NAME`, used by every agent except the Qualification Agent.
+- `QUALIFICATION_MODEL_NAME` — optional, defaults to `gpt-5.4`. Used only
+  by `qualification_agent.py` - see the Agent architecture table above.
+- `OPENAI_PROJECT_ID` — optional, but recommended once more than one app
+  shares your OpenAI org. Scopes `check_openai_cost.py`'s spend report to
+  just this project instead of every app on the org.
+- `OPENAI_ADMIN_KEY` — optional, only needed to run `check_openai_cost.py`.
+  An Admin API key (**not** the regular `OPENAI_API_KEY`, which can't read
+  billing data) - create one at platform.openai.com → Settings →
+  Organization → Admin keys (needs the `api.usage.read` scope).
 
 The Supplier Qualifier (below) needed no new secrets.
 
@@ -236,7 +307,12 @@ library or capability is imported anywhere in this project.
   custom scraping, no Amazon-specific data sources.
 - Qualification scoring evaluates *outreach opportunity*, not Amazon
   product-level profitability — those are different questions.
-- No persistence between runs (no CRM/pipeline) — each run is standalone.
+- ~~No persistence between runs (no CRM/pipeline) — each run is
+  standalone.~~ → `batch_results/` now persists across runs and
+  `batch_runner.py` checks it (see "Already-scored brands are skipped by
+  default" above) - still no CRM-style pipeline/lifecycle tracking on the
+  Brand Qualifier side, though (that exists on the Supplier Qualifier side
+  via `lifecycle_state`).
 - No actual email sending, follow-up scheduling, or reply handling.
 - Human approval loop is a plain terminal prompt.
 
@@ -340,11 +416,25 @@ at most, never `VERIFIED` authorization. Phrases like "Amazon-friendly" or
 "we supply Amazon sellers" are never interpreted as brand permission to
 resell on Amazon - marketplace permission is `UNKNOWN` unless explicitly stated.
 
+### New-business accessibility
+
+Added for a brand-new R&T, which starts with no trading history and no
+existing distributor relationships: `SupplierCandidate` also captures
+`new_business_accessible` (yes/no/unknown), `requires_minimum_years_in_business`,
+`requires_trade_references`, and `requires_credit_application` - evidence-graded
+the same way as everything else above (only set from an explicit source
+like a wholesale FAQ or application page, never inferred from a small
+opening order or from silence). This feeds its own weighted scoring
+dimension (below) and a dedicated "Startup-Friendly Call List" in both
+reports - the actionable output for someone with no distributors yet. See
+[WORKFLOW.md](WORKFLOW.md) for the full worked example.
+
 ### Scoring and hard gates
 
 `supplier_scoring.py` turns the Qualification Agent's raw per-dimension
 judgment into a weighted 0-100 score (weights: `config.SUPPLIER_SCORING_WEIGHTS`,
-sums to 100, same pattern as `OUTREACH_RUBRIC`) and then applies hard gates
+11 dimensions summing to 100, including "New-business/startup accessibility"
+(10 pts) - same pattern as `OUTREACH_RUBRIC`) and then applies hard gates
 **in plain Python**, so these are guarantees, not instructions an LLM might
 drift from:
 
@@ -366,10 +456,22 @@ pipeline never assigns anything beyond `RESEARCHED`** - every later state
 represents a real external event (a reply, an approved account...) and can
 only be set by an explicit human action, never assumed.
 
-### Reports (`supplier_report.py` / `supplier_report_cli.py`)
+**Outreach drafting only auto-fires for `CONTACT_NOW`**, not
+`INVESTIGATE_FURTHER` - a cost decision, not a scoring one. Most
+`INVESTIGATE_FURTHER` candidates (missing info, unresolved questions) are
+never actually pursued, so drafting 3 emails + a manager evaluation for
+every one of them mostly went to waste. A human can still draft outreach
+for a specific `INVESTIGATE_FURTHER` candidate once they've decided it's
+worth pursuing - "Draft outreach now" in the GUI's Review Queue, or
+`REGENERATE` at the `supplier_review_one.py` prompt.
 
-Five views, all rendered from already-persisted data (no paid calls):
-a ranked supplier report, a brand-to-supplier matrix, a
+### Reports (`supplier_report.py` / `supplier_report_cli.py` / `supplier_report_md.py`)
+
+Six views, all rendered from already-persisted data (no paid calls):
+a ranked supplier report, a **Startup-Friendly Call List** (phone, contact
+method, and opening order for every candidate confirmed to work with a
+brand-new business, sorted by score - the actionable output
+[WORKFLOW.md](WORKFLOW.md) is built around), a brand-to-supplier matrix, a
 missing-information/action queue, a contact-now queue, and a do-not-pursue
 section with reasons. Every evidence line shows its source URL and the date
 it was checked.
@@ -379,6 +481,17 @@ python supplier_report_cli.py --batch supbatch_20260920_101500
 python supplier_report_cli.py --brand "Lemax"
 python supplier_report_cli.py --batch supbatch_20260920_101500 --save   # also writes to supplier_reports/
 ```
+
+For a printable version grouped by brand (one page per candidate, score
+breakdown table, the winning email, a decision checklist) instead of
+terminal text:
+
+```
+python supplier_report_md.py --batch supbatch_20260920_101500
+```
+→ `batch_reports/Distributor_candidates_<batch id>_<timestamp>.md`. The
+Brand Qualifier side has the equivalent for Stage 1 results - see
+[Supporting tooling](#supporting-tooling) below.
 
 ### Human approval workflow
 
@@ -457,17 +570,46 @@ supplier_data/
   cache/<brand>.json             # most recent research findings per brand
 ```
 
+### Growing distributor_master_list.csv (`grow_distributor_master_list.py`)
+
+Closes the loop: SmartScout brands → vet brands → discover distributors →
+vet distributors → **grow `distributor_master_list.csv`**. Every
+distributor Stage 2 discovers and qualifies as not `DO_NOT_PURSUE` is a
+real candidate worth keeping on record, so the master list - originally a
+one-time import from a PDF (see [Supplier Qualifier](#supplier-qualifier-stage-2)
+intro) - grows automatically at the end of every `supplier_batch_runner.py`
+run instead of staying a frozen snapshot:
+
+```
+python grow_distributor_master_list.py             # standalone backfill from every saved relationship
+python grow_distributor_master_list.py --dry-run    # preview without writing
+```
+
+**Append-only** - an existing row is never modified or removed, and a
+distributor already in the list (matched by normalized name) is never
+duplicated. The rule for what gets added is deliberately permissive
+(anything not `DO_NOT_PURSUE`), so the growing list still needs the same
+kind of human eyeballing as everything else here - it's a candidate pool,
+not a pre-vetted shortlist. `distributor_master_list.csv` itself is
+real business data and is **not tracked by git** (see `.gitignore`) - back
+it up some other way, since it's now a compounding asset, not just a
+one-time import.
+
 ### Configuration (`config.py`)
 
 Everything supplier-specific is grouped in one section of `config.py`:
 `RT_OPERATING_STATE` / `RT_REQUIRES_MARYLAND_SERVICE` / `PREFERRED_SUPPLIER_GEOGRAPHY`,
-`SUPPLIER_SCORING_WEIGHTS`, `SUPPLIER_RECOMMENDATION_THRESHOLDS`,
+`SUPPLIER_SCORING_WEIGHTS` (now 11 dimensions - see "New-business
+accessibility" above), `SUPPLIER_RECOMMENDATION_THRESHOLDS`,
 `SUPPLIER_ESCALATION_FIELDS`, `SUPPLIER_STALE_DATA_DAYS`,
 `SUPPLIER_MAX_ESCALATIONS_PER_BRAND`, `SUPPLIER_DEFAULT_CONCURRENCY`,
 `SUPPLIER_ENABLED_OUTREACH_STRATEGIES`, and `supplier_sender_email()`
 (defaults to `purchasing@rtdistributiongroup.com` from the existing
 `RT_PROFILE`, never a separately hardcoded address). No new secrets were
-needed - see [`.env.example`](.env.example).
+needed - see [`.env.example`](.env.example). The Brand Qualifier side has
+its own equivalent staleness/model settings now too:
+`BRAND_STALE_DATA_DAYS` and `QUALIFICATION_MODEL_NAME` (see
+[Required environment variables](#required-environment-variables) above).
 
 ### Known limitations (Supplier Qualifier)
 
@@ -490,6 +632,15 @@ needed - see [`.env.example`](.env.example).
   them non-negotiable; everything else (which candidates to search for, how
   to phrase outreach) is still LLM judgment, so quality depends on the
   underlying model and what `WebSearchTool` can actually find.
+- The Supplier Qualification Agent deliberately runs on `MODEL_NAME`
+  (mini), not the stronger `QUALIFICATION_MODEL_NAME` the Brand Qualifier's
+  Qualification Agent uses - tested and found that the stronger model
+  miscalibrates this agent's `dimension_scores` (a `dict[str, int]`): it
+  anchors on the rubric's *weight* numbers instead of giving independent
+  0-100 scores, reproduced on a real strongly-evidenced candidate that
+  mini scored correctly. Revisit if `dimension_scores` is ever reshaped
+  away from a bare dict (see `supplier_qualification_agent.py`'s
+  `model=` comment for the full reproduction).
 
 ### A note on a bug fix
 
@@ -502,6 +653,63 @@ docstring - never matched its own saved file. Fixed by slugifying the
 search fragment the same way filenames are slugified; see
 `tests/test_persistence.py` for the regression test. This was the one
 change made to an existing Brand Qualifier file.
+
+### A note on a second bug fix: the strict-schema crash
+
+Every `Runner.run()` against the Supplier Qualification Agent used to
+crash with a pydantic `ValidationError` before this was fixed -
+`SupplierQualificationResult.dimension_scores` (an open-ended
+`dict[str, int]`) is rejected by OpenAI's strict structured-output mode,
+which requires a fixed, named set of properties. Fixed with
+`AgentOutputSchema(SupplierQualificationResult, strict_json_schema=False)`
+in `supplier_qualification_agent.py` - the fix the SDK's own error message
+suggests. This had gone uncaught because the test suite mocks
+`Runner.run()` entirely, so the real schema is never built in tests; it
+only surfaced the first time the Supplier Qualifier ran against the real
+API.
+
+---
+
+## Supporting tooling
+
+A few standalone, free (no API calls) tools that sit around both stages -
+see [WORKFLOW.md](WORKFLOW.md) for how they fit together end to end.
+
+### Printable batch review (`batch_report_md.py`)
+
+The Brand Qualifier equivalent of `supplier_report_md.py` above: renders
+every saved `batch_results/` result into one printable Markdown file,
+ranked by score - meant to be opened and printed for paper review/markup
+(a score breakdown, risks, the winning email, and a decision checklist per
+company). Only the newest result per company is included if a brand was
+scored more than once.
+
+```
+python batch_report_md.py                                    # every saved result
+python batch_report_md.py --since 20261004                   # only results saved on/after that date
+python batch_report_md.py --names-csv distributor_master_list.csv --label Distributor   # scope to one list
+```
+
+`--label` controls the title/column header (default `Brand`) - pass
+`--label Distributor` when reviewing a `distributor_master_list.csv`-sourced
+batch, where the companies are distributors, not product brands.
+
+### OpenAI cost tracking (`check_openai_cost.py`)
+
+Reports this project's actual OpenAI spend via the Costs API, scoped to
+`OPENAI_PROJECT_ID` so it isn't muddied by other apps sharing the same
+OpenAI org (needs an Admin API key - see
+[Required environment variables](#required-environment-variables) above,
+not the regular `OPENAI_API_KEY`, which can't read billing data):
+
+```
+python check_openai_cost.py                    # this month so far, this project
+python check_openai_cost.py --since 2026-10-01
+python check_openai_cost.py --org-wide          # ignore project scoping - see every app on the org
+```
+
+Reports *spend*, not remaining prepaid balance - compare the total against
+what's been deposited to know when to top up.
 
 ---
 
@@ -532,6 +740,20 @@ itself was verified by hand with `streamlit run`). The Brand Qualifier
 itself had no test suite before this change; `tests/test_persistence.py`
 and `tests/test_brand_batch_link.py` are its first tests, added because
 `brand_batch_link.py` depends on `persistence.py`'s behavior directly.
+
+`tests/test_batch_runner.py` covers the already-scored skip/staleness
+behavior; `tests/test_filter_smartscout_categories.py` covers the
+SmartScout category-filter matching (including a regression test for a
+real false-positive bug - plain substring matching once matched "tea"
+inside "steak"); `tests/test_grow_distributor_master_list.py` covers the
+append-only/dedup/`DO_NOT_PURSUE`-exclusion guarantees for
+`distributor_master_list.csv`'s growth. All of the above were also
+verified by hand against the real OpenAI API and the user's real data at
+least once each, beyond what the mocked test suite covers - notably the
+new-business-accessibility scoring calibration (see
+[Known limitations](#known-limitations-supplier-qualifier) above) and the
+strict-schema crash fix, neither of which the mocked tests alone would
+have caught.
 
 ## Origin
 
