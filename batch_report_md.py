@@ -13,7 +13,7 @@ reviewing a distributor_master_list.csv-sourced batch instead, where the
 companies are distributors, not product brands.
 
 Usage:
-    python batch_report_md.py                     # all results -> batch_reports/review_<timestamp>.md
+    python batch_report_md.py                     # all results -> batch_reports/batch_review_<timestamp>.md
     python batch_report_md.py --all-drafts        # also print the two non-winning email drafts
     python batch_report_md.py --since 20260920    # only result files saved on/after that date (YYYYMMDD)
     python batch_report_md.py --names-csv distributor_master_list.csv --label Distributor   # only these companies
@@ -27,6 +27,7 @@ from pathlib import Path
 
 from config import RT_PROFILE
 from persistence import RESULTS_DIR, load_result
+from recommendation_labels import display_recommendation
 from report import _STRATEGY_LABELS
 from workflow import WorkflowResult
 
@@ -105,7 +106,7 @@ def _email_section(result: WorkflowResult, strategy: str, heading: str) -> str:
 
 def _company_section(rank: int, result: WorkflowResult, all_drafts: bool) -> str:
     p, q, m = result.prospect, result.qualification, result.manager_decision
-    lines = [f"## {rank}. {p.company_name} — {q.overall_score}/100 · {q.recommendation}", ""]
+    lines = [f"## {rank}. {p.company_name} — {q.overall_score}/100 · {display_recommendation(q.recommendation)}", ""]
 
     lines += ["### Research summary", "", _val(p.company_description), ""]
 
@@ -170,14 +171,14 @@ def build_markdown(results: list[WorkflowResult], all_drafts: bool, label: str =
     ]
     for i, r in enumerate(results, start=1):
         style = _STRATEGY_LABELS.get(r.manager_decision.winning_strategy, r.manager_decision.winning_strategy)
-        header.append(f"| {i} | {r.prospect.company_name} | {r.qualification.overall_score} | {r.qualification.recommendation} | {style} |")
+        header.append(f"| {i} | {r.prospect.company_name} | {r.qualification.overall_score} | {display_recommendation(r.qualification.recommendation)} | {style} |")
     sections = [_company_section(i, r, all_drafts) for i, r in enumerate(results, start=1)]
     return f"\n{_PAGE_BREAK}\n\n".join(["\n".join(header)] + sections)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render all saved batch results into one printable Markdown file - no API calls.")
-    parser.add_argument("--output", help="Output .md path (default: batch_reports/review_<timestamp>.md)")
+    parser.add_argument("--output", help="Output .md path (default: batch_reports/batch_review_<timestamp>.md)")
     parser.add_argument("--all-drafts", action="store_true", help="Also print the two non-winning email drafts for each company")
     parser.add_argument("--since", help="Only include result files saved on/after this date (YYYYMMDD)")
     parser.add_argument("--names-csv", help="Only include companies listed in this CSV (e.g. distributor_master_list.csv) - "
@@ -202,7 +203,7 @@ def main() -> None:
         path = Path(args.output)
     else:
         REPORTS_DIR.mkdir(exist_ok=True)
-        path = REPORTS_DIR / f"review_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        path = REPORTS_DIR / f"batch_review_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
     path.write_text(build_markdown(results, args.all_drafts, args.label), encoding="utf-8")
 
     print(f"Wrote {len(results)} {args.label.lower()}(s) to {path}")

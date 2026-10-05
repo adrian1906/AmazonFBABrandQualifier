@@ -8,6 +8,7 @@ single-relationship detail view used by the approval gate (see approval.py
 """
 
 from models import BrandSupplierRelationship
+from recommendation_labels import display_recommendation
 
 _ROLE_LABELS = {
     "manufacturer_direct": "Manufacturer/Brand Direct",
@@ -44,7 +45,7 @@ def _evidence_lines(rel: BrandSupplierRelationship) -> list[str]:
 def format_relationship_summary_line(rel: BrandSupplierRelationship) -> str:
     c = rel.assessment.candidate
     return (
-        f"{rel.assessment.score_breakdown.final_score:>3}/100  {rel.assessment.recommendation:<20} "
+        f"{rel.assessment.score_breakdown.final_score:>3}/100  {display_recommendation(rel.assessment.recommendation):<14} "
         f"{c.legal_business_name}  [{_role_label(c.role)}]  <- {rel.brand_name}"
     )
 
@@ -94,7 +95,7 @@ Contact method: {c.contact_method or "unknown"}
 Serves Maryland: {c.ships_to_maryland}
 
 Score: {breakdown.final_score}/100
-Recommendation: {rel.assessment.recommendation}
+Recommendation: {display_recommendation(rel.assessment.recommendation)}
 Lifecycle state: {rel.lifecycle_state}
 
 Score breakdown:
@@ -158,7 +159,7 @@ def format_brand_supplier_matrix(relationships: list[BrandSupplierRelationship])
             c = rel.assessment.candidate
             lines.append(
                 f"  - {c.legal_business_name} [{_role_label(c.role)}] "
-                f"-> {rel.assessment.recommendation} ({rel.assessment.score_breakdown.final_score}/100)"
+                f"-> {display_recommendation(rel.assessment.recommendation)} ({rel.assessment.score_breakdown.final_score}/100)"
             )
         lines.append("")
     return "\n".join(lines).strip()

@@ -24,8 +24,25 @@ RESULTS_DIR = Path(__file__).parent / "batch_results"
 _TIMESTAMP_RE = re.compile(r"_(\d{8})_(\d{6})$")
 
 
+def _slug_core(company_name: str) -> str:
+    """The slug without the "prospect" fallback below - an empty result
+    means the name has no ASCII-representable characters at all (e.g. a
+    name written only in Japanese/Chinese/etc. script)."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", company_name).strip("_")
+
+
 def _slugify(company_name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_-]+", "_", company_name).strip("_") or "prospect"
+    return _slug_core(company_name) or "prospect"
+
+
+def has_usable_name(company_name: str) -> bool:
+    """False when company_name has no ASCII-representable characters at
+    all, so _slugify() would silently collapse it to the generic
+    "prospect" stem - every such company would be indistinguishable from
+    every other one in a file listing. batch_runner.py uses this to skip
+    a row BEFORE spending any API money on it, rather than research it and
+    then have nowhere distinguishable to save the result."""
+    return bool(_slug_core(company_name))
 
 
 def result_to_dict(result: WorkflowResult) -> dict:

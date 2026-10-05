@@ -25,6 +25,14 @@ config.BRAND_STALE_DATA_DAYS days (default 90) - older than that, SmartScout's
 own numbers have likely drifted, so it's re-processed rather than skipped
 forever. Pass --rescore to process every row regardless of age.
 
+A brand whose name has no ASCII-representable characters at all (e.g.
+written only in Japanese/Chinese/etc. script) is also skipped, unconditionally
+- see persistence.has_usable_name. Such a name collapses to the same
+generic filename as every other one of its kind, making saved results
+indistinguishable from each other, so these are excluded BEFORE any API
+call is made rather than researched and then have nowhere distinguishable
+to save the result.
+
 Usage:
     python batch_runner.py --csv my_smartscout_export.csv
     python batch_runner.py --csv my_smartscout_export.csv --limit 5   # cheap test run
@@ -43,7 +51,7 @@ from dotenv import load_dotenv
 
 from config import BRAND_STALE_DATA_DAYS
 from entity_resolution import normalize_company_name
-from persistence import RESULTS_DIR, save_result, scored_company_names
+from persistence import RESULTS_DIR, save_result, scored_company_names, has_usable_name
 from smartscout_import import load_prospects_from_csv
 from workflow import WorkflowResult, run_brand_acquisition
 
@@ -112,6 +120,13 @@ async def run_batch(
     skip_scored: bool = True,
 ) -> list[WorkflowResult]:
     rows = load_prospects_from_csv(csv_path)
+
+    unusable = [p.company_name for p, _notes in rows if not has_usable_name(p.company_name)]
+    if unusable:
+        rows = [(p, notes) for p, notes in rows if has_usable_name(p.company_name)]
+        print(f"Skipping {len(unusable)} brand(s) with no ASCII-representable characters in their name "
+              f"(can't be saved under a distinguishable filename): {', '.join(unusable)}")
+
     total_loaded = len(rows)
 
     skipped = 0

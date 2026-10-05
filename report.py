@@ -7,6 +7,7 @@ Kept separate from workflow.py (which only produces data) and approval.py
 file has one job.
 """
 
+from recommendation_labels import display_recommendation
 from workflow import WorkflowResult
 
 _STRATEGY_LABELS = {
@@ -47,7 +48,7 @@ Qualification Score:
 {q.overall_score}/100
 
 Recommendation:
-{q.recommendation}
+{display_recommendation(q.recommendation)}
 
 Research Summary:
 {research_summary}

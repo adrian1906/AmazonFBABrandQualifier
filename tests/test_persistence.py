@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta
 
 from models import Prospect, ResearchFindings, QualificationResult, OutreachDraft, ManagerDecision, DraftScore
-from persistence import save_result, find_results, scored_company_names, result_to_dict, _slugify
+from persistence import save_result, find_results, scored_company_names, result_to_dict, _slugify, has_usable_name
 from workflow import WorkflowResult
 
 
@@ -116,3 +116,19 @@ def test_scored_company_names_uses_newest_result_per_company(tmp_path):
     _save_result_at(_make_result("Re-Scored Co"), tmp_path, recent)
 
     assert normalize_company_name("Re-Scored Co") in scored_company_names(directory=tmp_path, max_age_days=90)
+
+
+def test_has_usable_name_false_for_no_ascii_characters():
+    assert has_usable_name("丸久小山園") is False
+    assert has_usable_name("「ノーブランド品」") is False
+
+
+def test_has_usable_name_true_for_ordinary_names():
+    assert has_usable_name("Diamine") is True
+    assert has_usable_name("Northwind Outdoor Gear Co.") is True
+
+
+def test_has_usable_name_true_for_mixed_script():
+    # Any ASCII-representable character at all is enough to produce a
+    # distinguishable filename.
+    assert has_usable_name("丸久小山園 USA") is True
