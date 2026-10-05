@@ -19,6 +19,7 @@ import gui_actions as actions
 import gui_command_builder as cmd
 import persistence
 import supplier_persistence
+from recommendation_labels import display_recommendation
 from report import format_report
 from supplier_report import format_full_supplier_report, format_relationship_detail
 
@@ -61,7 +62,7 @@ with tab_reports:
         st.info("No saved Brand Qualifier results yet.")
     else:
         for r in brand_results:
-            label = f"{r.prospect.company_name} — {r.qualification.recommendation} ({r.qualification.overall_score}/100)"
+            label = f"{r.prospect.company_name} — {display_recommendation(r.qualification.recommendation)} ({r.qualification.overall_score}/100)"
             with st.expander(label):
                 st.text(format_report(r))
 
@@ -78,7 +79,7 @@ with tab_review:
         else:
             labels = [
                 f"{r.brand_name} -> {r.assessment.candidate.legal_business_name} "
-                f"({r.assessment.recommendation}, {r.assessment.score_breakdown.final_score}/100)"
+                f"({display_recommendation(r.assessment.recommendation)}, {r.assessment.score_breakdown.final_score}/100)"
                 for r in pending
             ]
             idx = st.selectbox("Pick a relationship to review", range(len(pending)), format_func=lambda i: labels[i])
@@ -108,8 +109,8 @@ with tab_review:
                 if c4.button("Reject", key=f"s_reject_{idx}"):
                     st.info("Rejected - nothing was saved.")
             else:
-                st.info(f"No outreach drafted yet (recommendation: {rel.assessment.recommendation}). "
-                        "Outreach isn't auto-drafted for INVESTIGATE_FURTHER - draft it now if you've decided to pursue this one.")
+                st.info(f"No outreach drafted yet (recommendation: {display_recommendation(rel.assessment.recommendation)}). "
+                        "Outreach isn't auto-drafted for Investigate - draft it now if you've decided to pursue this one.")
                 if st.button("Draft outreach now", key=f"s_draft_{idx}", type="primary"):
                     with st.spinner("Drafting outreach and evaluating..."):
                         actions.regenerate_supplier_relationship(rel)
@@ -121,7 +122,7 @@ with tab_review:
         if not results:
             st.info("No saved Brand Qualifier results yet.")
         else:
-            labels = [f"{r.prospect.company_name} ({r.qualification.recommendation}, {r.qualification.overall_score}/100)" for r in results]
+            labels = [f"{r.prospect.company_name} ({display_recommendation(r.qualification.recommendation)}, {r.qualification.overall_score}/100)" for r in results]
             idx = st.selectbox("Pick a brand result to review", range(len(results)), format_func=lambda i: labels[i], key="brand_review_select")
             result = results[idx]
             st.text(format_report(result))

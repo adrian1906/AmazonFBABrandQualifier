@@ -24,6 +24,7 @@ from pathlib import Path
 
 import supplier_persistence
 from models import BrandSupplierRelationship
+from recommendation_labels import display_recommendation
 from supplier_report import format_relationship_detail
 from supplier_scoring import advance_lifecycle_state, LifecycleGateError
 from supplier_workflow import regenerate_supplier_outreach
@@ -100,12 +101,12 @@ async def run_supplier_approval_gate(rel: BrandSupplierRelationship) -> BrandSup
         can_draft_now = rel.assessment.recommendation == "INVESTIGATE_FURTHER"
 
         if not has_drafts and not can_draft_now:
-            print(f"\nNo outreach was drafted for this candidate (recommendation: {rel.assessment.recommendation}).")
+            print(f"\nNo outreach was drafted for this candidate (recommendation: {display_recommendation(rel.assessment.recommendation)}).")
             print("Nothing to approve here - see the do-not-pursue / missing-information reports instead.")
             return rel
 
         if not has_drafts:
-            print(f"\nNo outreach drafted yet (recommendation: {rel.assessment.recommendation}).")
+            print(f"\nNo outreach drafted yet (recommendation: {display_recommendation(rel.assessment.recommendation)}).")
             choice = _prompt_choice({"regenerate", "reject"})
         else:
             choice = _prompt_choice()

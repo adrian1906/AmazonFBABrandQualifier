@@ -8,6 +8,7 @@ brands already on file.
 
 import csv
 
+import persistence
 from models import DraftScore, ManagerDecision, OutreachDraft, Prospect, QualificationResult, ResearchFindings
 from persistence import save_result
 from workflow import WorkflowResult
@@ -111,3 +112,23 @@ async def test_all_brands_already_scored_processes_nothing(tmp_path, monkeypatch
     results = await batch_runner.run_batch(str(csv_path), allow_web_search=False)
 
     assert results == []
+
+
+async def test_name_with_no_ascii_characters_is_skipped_before_any_api_call(tmp_path, monkeypatch):
+    csv_path = tmp_path / "export.csv"
+    _write_csv(csv_path, ["丸久小山園", "Brand New Co"])
+
+    responses = {
+        "Brand Research Agent": ResearchFindings(company_name="Brand New Co"),
+        "Qualification Agent": _brand_qualification(),
+        **_OUTREACH_RESPONSES,
+    }
+    patch_runner(monkeypatch, responses)
+    # If the unusable-name brand were researched anyway, FakeRunner would
+    # still succeed (its name is irrelevant to agent dispatch) - the real
+    # assertion is that it never shows up in the results or on disk.
+
+    results = await batch_runner.run_batch(str(csv_path), allow_web_search=False)
+
+    assert [r.prospect.company_name for r in results] == ["Brand New Co"]
+    assert list(persistence.RESULTS_DIR.glob("prospect_*.json")) == []

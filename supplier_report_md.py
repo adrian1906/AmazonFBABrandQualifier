@@ -20,6 +20,7 @@ from pathlib import Path
 import supplier_persistence
 from config import RT_PROFILE
 from models import BrandSupplierRelationship
+from recommendation_labels import display_recommendation
 from supplier_report import _role_label, _amazon_status
 
 REPORTS_DIR = Path(__file__).parent / "batch_reports"
@@ -66,7 +67,7 @@ def _distributor_section(rel: BrandSupplierRelationship) -> str:
     breakdown = rel.assessment.score_breakdown
 
     lines = [
-        f"### {c.legal_business_name} — {breakdown.final_score}/100 · {rel.assessment.recommendation}",
+        f"### {c.legal_business_name} — {breakdown.final_score}/100 · {display_recommendation(rel.assessment.recommendation)}",
         f"_Role: {_role_label(c.role)}_",
         "",
     ]
@@ -116,7 +117,7 @@ def _distributor_section(rel: BrandSupplierRelationship) -> str:
             lines += [f"**Manager's suggested final edits:** {edits}", ""]
     else:
         lines += [
-            f"_No outreach drafted - recommendation was {rel.assessment.recommendation}, "
+            f"_No outreach drafted - recommendation was {display_recommendation(rel.assessment.recommendation)}, "
             "which doesn't reach the outreach-drafting stage._", "",
         ]
 
@@ -136,7 +137,7 @@ def _brand_section(rank: int, brand_name: str, rels: list[BrandSupplierRelations
     lines = [
         f"## {rank}. {brand_name}",
         f"_Best option: **{top.assessment.candidate.legal_business_name}** — "
-        f"{top.assessment.score_breakdown.final_score}/100, {top.assessment.recommendation} · "
+        f"{top.assessment.score_breakdown.final_score}/100, {display_recommendation(top.assessment.recommendation)} · "
         f"{len(ranked)} distributor(s) found_",
         "",
     ]
@@ -167,7 +168,7 @@ def build_markdown(relationships: list[BrandSupplierRelationship], label: str) -
         top = max(rels, key=lambda r: r.assessment.score_breakdown.final_score)
         header.append(
             f"| {i} | {brand_name} | {top.assessment.candidate.legal_business_name} | "
-            f"{top.assessment.score_breakdown.final_score} | {top.assessment.recommendation} | {len(rels)} |"
+            f"{top.assessment.score_breakdown.final_score} | {display_recommendation(top.assessment.recommendation)} | {len(rels)} |"
         )
 
     startup_friendly = [
@@ -190,7 +191,7 @@ def build_markdown(relationships: list[BrandSupplierRelationship], label: str) -
     else:
         call_list.append(
             "_(none confirmed yet - most candidates below have this as UNKNOWN rather than a confirmed yes or no; "
-            "the fastest next step is calling a few top-ranked INVESTIGATE_FURTHER/CONTACT_NOW candidates to ask directly.)_"
+            "the fastest next step is calling a few top-ranked Investigate/Pursue candidates to ask directly.)_"
         )
 
     sections = [_brand_section(i, brand_name, rels) for i, (brand_name, rels) in enumerate(brand_order, start=1)]
