@@ -325,3 +325,54 @@ def supplier_sender_email() -> str:
         if candidate.startswith("purchasing@"):
             return candidate
     return RT_PROFILE["primary_email"]
+
+
+# ===========================================================================
+# FBA Catalog Analyzer configuration
+#
+# Turns a distributor price list (catalogs/*.xlsx or .csv) into per-ASIN
+# landed-cost ROI and a target supplier price/discount. See catalog_models.py,
+# roi_engine.py, catalog_import.py, keepa_adapter.py, demand_engine.py, and
+# catalog_scan.py. Every value below is a PROVISIONAL default - same
+# principle as SUPPLIER_SCORING_WEIGHTS above: defined once here, not
+# scattered through code, so it can be tuned without hunting for it, and
+# never silently treated as a researched fact about R&T's actual costs.
+# ===========================================================================
+
+from decimal import Decimal as _Decimal  # local alias - this file has no other Decimal use above
+
+CATALOG_MARKETPLACE = "Amazon US"
+CATALOG_CURRENCY = "USD"
+
+# Qualification thresholds (spec sections 5 and 9). ROI always means
+# landed-cost ROI by default (CATALOG_ROI_CONVENTION) - profit / (COGS + B),
+# never margin or an annualized return. Both conventions are always shown;
+# this only decides which one gates qualification. Highlight is "ROI
+# strictly greater than" this threshold; target is "ROI >= " that one -
+# asserted below to keep the ordering sane.
+CATALOG_TARGET_ROI = _Decimal("0.10")
+CATALOG_HIGHLIGHT_ROI_THRESHOLD = _Decimal("0.08")
+CATALOG_ROI_CONVENTION = "landed"  # "landed" or "merchandise"
+
+assert CATALOG_HIGHLIGHT_ROI_THRESHOLD < CATALOG_TARGET_ROI,     "CATALOG_HIGHLIGHT_ROI_THRESHOLD must be strictly below CATALOG_TARGET_ROI"
+
+# Historical price-window defaults (section 3). Seasonal products need the
+# longer windows - there is no automatic seasonality detector, so these are
+# chosen per-product by the user, never inferred.
+CATALOG_DEFAULT_HISTORY_DAYS = 90
+CATALOG_SEASONAL_HISTORY_DAYS = 365
+CATALOG_SEASONAL_EXTENDED_HISTORY_DAYS = 730
+
+# Cost model defaults (section 4). PROVISIONAL, not researched facts about
+# R&T's actual prep center or Amazon's current fee schedule - every
+# CostComponent built from these is tagged status="assumed", never
+# "verified", and must be overridable per run/product.
+CATALOG_PREP_COST_PER_UNIT = _Decimal("1.50")  # per finished Amazon sellable unit
+CATALOG_REFERRAL_RATE_FALLBACK = _Decimal("0.15")  # used only when no product-specific fee is supplied
+
+# Set with Dr. Hood 2026-10-08 - explicit answers to the FBA Catalog
+# Analyzer spec's own blocking questions, not generic industry defaults:
+CATALOG_HOLDING_PERIOD_DAYS = 60  # cash-exposure / storage-fee planning assumption
+CATALOG_MIN_MONTHLY_SALES = 25  # demand floor - see demand_engine.py; overridable per category/product
+CATALOG_MIN_PROFIT_PER_UNIT: _Decimal | None = None  # None = no minimum - ROI% alone qualifies (explicitly declined)
+CATALOG_ORDER_BUDGET_CAP: _Decimal | None = None  # None = no cap - size to the catalog as given (explicitly declined)
