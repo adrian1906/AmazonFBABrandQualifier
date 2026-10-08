@@ -15,6 +15,7 @@ dependencies = [
     # Runner.run() crashes with a pydantic ValidationError. Cap until the
     # agents SDK is upgraded past that.
     "openai<2.45",
+    "openpyxl>=3.1.5",
     "pydantic>=2.13.3",
     "python-dotenv>=1.2.2",
     "requests>=2.32.0",

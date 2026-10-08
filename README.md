@@ -9,7 +9,7 @@ life as an adaptation of the Week 2 sales-agent exercise (`3_lab3.ipynb`)
 from Ed Donner's Agentic AI course, and later graduated into this
 standalone repository as its own product.
 
-**Two-stage workflow:**
+**Three-stage workflow:**
 
 1. **Brand Qualifier** ("is this brand worth pursuing?") - the original
    Version 1 system, unchanged and still fully functional on its own. See
@@ -17,6 +17,11 @@ standalone repository as its own product.
 2. **Supplier Qualifier** ("who can legitimately supply this brand to R&T,
    and is that supply path usable for Amazon resale?") - the Version 2
    addition. See [Supplier Qualifier](#supplier-qualifier-stage-2) below.
+3. **FBA Catalog Analyzer** ("now that I have a distributor, which specific
+   products in their price list are actually profitable to buy and resell
+   on Amazon, and at what price would an unprofitable one become
+   profitable?") - the Version 3 addition. See
+   [FBA Catalog Analyzer](#fba-catalog-analyzer-stage-3) below.
 
 Around those two stages sits a small toolkit for running this repeatedly
 without re-deriving the process each time or accidentally re-paying for
@@ -670,6 +675,173 @@ API.
 
 ---
 
+## FBA Catalog Analyzer (Stage 3)
+
+Once a distributor exists (Stage 2 found one, or you already had one),
+this turns their price list into a per-product answer to "is this worth
+buying, and at what price would it be?" - landed-cost ROI, a target
+supplier price for anything below target, and a minimum-monthly-sales
+demand check, all computed in plain deterministic Python (`roi_engine.py`,
+`decimal.Decimal`, never an LLM doing arithmetic).
+
+### What it does and doesn't do today
+
+**Works today, against a real catalog, for real:** CSV/XLSX import with
+column-mapping detection and a preview before anything is committed
+(`catalog_import.py`); UPC/EAN checksum validation, including detecting
+and flagging the single most common real-world data defect - a UPC that
+lost a leading zero somewhere upstream (confirmed on the sample catalog:
+~32% of its UPCs are exactly one digit short of a checksum-valid UPC-A);
+the full landed-cost/merchandise-cost ROI math and the "what supplier
+price would reach my target ROI" solver, rounded down and
+re-verified (`roi_engine.py`); the minimum-monthly-sales demand gate,
+including the "100+"-lower-bound and parent/child-ambiguity cases
+(`demand_engine.py`); and the orchestration that ties a row to a cost
+ledger, an ROI tier, and a qualify/don't-qualify decision with a reason
+(`catalog_scan.py`).
+
+**Not live yet - runs in fixture/demo mode:** ASIN resolution and Amazon
+price history both go through Keepa (`keepa_adapter.py`), and no
+`KEEPA_API_KEY` is configured in this environment. Every row from a real
+scan therefore comes back `needs_review`/`INCOMPLETE` - an honest "can't
+confirm this without live data," never a fabricated profit number. This
+is the spec's own explicit fallback, not a bug: set `KEEPA_API_KEY` (a
+real Keepa **API key**, from your Keepa account's API settings - **not**
+your Keepa login password, which can't authenticate the API at all) and
+`catalog_batch.py` picks up live resolution automatically. Even then,
+**price-history decoding is deliberately left unimplemented**
+(`LiveKeepaProvider.get_pricing_snapshot` raises `NotImplementedError`
+with an explanation) - Keepa's historical-price encoding needs to be
+verified against a real response before this project trusts it with a
+financial calculation, matching the "live-test real API behavior before
+declaring a feature complete" discipline the rest of this README follows.
+Amazon SP-API (Product Fees, Catalog Items-by-UPC, Listings Restrictions)
+isn't wired in either - it needs an OAuth app registration in Seller
+Central, not a username/password, and would materially improve this
+feature (real fees instead of the 15% referral-rate fallback, an
+official ASIN-by-UPC lookup, real eligibility status) if set up later.
+
+### Running it
+
+```bash
+# 1. Preview - fast (~1s even on a 98,000-row catalog), no commitment.
+python catalog_batch.py --preview "catalogs/my_price_list.xlsx" --supplier "Acme Distribution"
+
+# 2. Same, but also run the full duplicate-UPC scan (slower on a big file).
+python catalog_batch.py --preview "catalogs/my_price_list.xlsx" --supplier "Acme Distribution" --thorough
+
+# 3. Full scan - cheap test run first.
+python catalog_batch.py --run "catalogs/my_price_list.xlsx" --supplier "Acme Distribution" --limit 10
+
+# 4. The real thing, once the mapping/price-basis above look right.
+python catalog_batch.py --run "catalogs/my_price_list.xlsx" --supplier "Acme Distribution"
+```
+
+`--price-basis case` (default `each`) tells the importer the WHOLESALE-style
+price column is per-case/inner-pack rather than per-single-unit - this
+can't be detected from the file itself (see `catalog_import.py`'s module
+docstring for why), so it's always an explicit, overridable assumption,
+never a silent guess baked into a result. A full run writes a ranked
+summary CSV to `batch_reports/` and the complete per-row result (cost
+ledger, evidence, every intermediate number) to `catalog_data/runs/`.
+
+### The ROI math
+
+Two conventions are always computed and shown; `config.CATALOG_ROI_CONVENTION`
+("landed", the default) decides which one gates qualification:
+
+- **Landed-cost ROI** = Profit / (normalized COGS + landed pre-sale costs)
+- **Merchandise-cost ROI** = Profit / normalized COGS
+- **Margin** = Profit / selling price (never confused with ROI)
+
+A case/inner-pack purchase price is normalized to the Amazon listing's own
+pack count before any of this runs - `roi_engine.normalize_cogs()`'s own
+worked example: a $48 case of 12 identical items, 2 of which make up one
+Amazon listing, is a $8 listing COGS, never a $48 one. For anything below
+the target ROI, `roi_engine.solve_target_supplier_price()` solves for the
+supplier price that would reach it, rounds the result DOWN to the
+supplier's quote precision, and recomputes the ROI at that rounded price
+to confirm it actually clears the target - all pinned to the spec's own
+worked numbers in `tests/test_roi_engine.py`.
+
+| Config | Default | Meaning |
+|---|---|---|
+| `CATALOG_TARGET_ROI` | 10% | "Target met" - qualifies on ROI alone |
+| `CATALOG_HIGHLIGHT_ROI_THRESHOLD` | 8% | "Negotiation candidate" floor - strictly above this, below target |
+| `CATALOG_MIN_MONTHLY_SALES` | 25 units/mo | Demand floor - set with Dr. Hood 2026-10-08 |
+| `CATALOG_PREP_COST_PER_UNIT` | $1.50 | PROVISIONAL prep-center cost per finished Amazon sellable unit |
+| `CATALOG_REFERRAL_RATE_FALLBACK` | 15% | PROVISIONAL - used only when no product-specific Amazon fee is known |
+| `CATALOG_HOLDING_PERIOD_DAYS` | 60 | Cash-exposure/storage planning assumption |
+| `CATALOG_MIN_PROFIT_PER_UNIT` | none | Explicitly declined - ROI% alone qualifies |
+| `CATALOG_ORDER_BUDGET_CAP` | none | Explicitly declined - no per-run cash cap |
+
+Every number above is provisional/configurable, defined once in
+`config.py` - never hardcoded into the math itself.
+
+### Why every row needs a cost ledger, not just a formula
+
+A row never gets a profit number from guessed or defaulted costs.
+`catalog_scan.py` only fills in two cost-ledger lines by default -
+`prep_center_processing` (the $1.50 provisional default) and
+`referral_fee` (the 15% fallback, scaled to the selling price) - both
+tagged `status="assumed"`, never `"verified"`. Everything else mandatory
+(supplier freight to prep, prep-to-Amazon shipping, Amazon inbound
+placement, FBA fulfillment fee, expected storage, returns allowance)
+starts `status="unknown"` and stays that way until supplied explicitly
+via `known_costs=`. **Any one unknown mandatory cost makes the whole
+result `INCOMPLETE`** - it is never silently treated as zero, and an
+`INCOMPLETE` row is never counted as qualifying, no matter how good its
+partial numbers look. The same rule applies to a mixed bundle with no
+complete bill-of-materials cost allocation, and to a row whose ASIN match
+was never confirmed (`match_status != "verified"`) - which, in today's
+fixture/demo mode, is every row, by design.
+
+### Demand gating
+
+A product qualifies only when it clears BOTH the ROI threshold and
+`CATALOG_MIN_MONTHLY_SALES` - meeting one without the other shows up as
+an explicit note (`"ROI met - sales minimum not met."` or the reverse),
+never a silent pass or fail. Missing sales data is `UNKNOWN_NEEDS_REVIEW`,
+not zero. A reported lower bound (e.g. a SmartScout "100+") passes only
+when the bound itself clears the minimum; otherwise it's inconclusive. A
+number that applies to a parent/combined-variations listing rather than
+the confirmed child ASIN is always flagged for review regardless of its
+size. See `demand_engine.py` and `tests/test_demand_engine.py`.
+
+### Files
+
+| File | Role |
+|---|---|
+| `catalog_models.py` | Every typed record (CatalogRow, AsinCandidate, CostComponent, RoiResult, ...) |
+| `catalog_import.py` | CSV/XLSX intake, column-mapping, UPC validation/leading-zero detection |
+| `roi_engine.py` | Pure deterministic cost/ROI math - no I/O, no catalog/Keepa knowledge |
+| `demand_engine.py` | Minimum-monthly-sales classification |
+| `keepa_adapter.py` | ASIN resolution/price history - fixture/demo mode by default, see above |
+| `catalog_scan.py` | Orchestrates one row: match -> cost ledger -> ROI -> demand -> qualify |
+| `catalog_persistence.py` | Save/load scan runs and column-mapping profiles |
+| `catalog_batch.py` | CLI entry point - `--preview` and `--run` (this section's examples) |
+
+### Known limitations (FBA Catalog Analyzer)
+
+- No live Keepa, SmartScout API/MCP, or Amazon SP-API integration is
+  wired in - see "What it does and doesn't do today" above. Every live
+  scan today is a `needs_review` screening pass over the cost/ROI/demand
+  plumbing, not a profit claim.
+- PDF catalogs aren't parsed - `catalog_import.load_catalog_rows` raises a
+  clear error pointing at a manual CSV/XLSX conversion route rather than
+  guessing at an unstructured table.
+- No Streamlit GUI tab yet - `catalog_batch.py` is CLI-only for now,
+  consistent with how this project's other expensive/batch operations
+  (`batch_runner.py`, `supplier_batch_runner.py`) are run from a terminal
+  rather than a button click.
+- Eligibility checks (listing approval, brand authorization, hazmat/IP
+  flags) are a typed placeholder (`EligibilityCheck`) with no live data
+  source behind them yet - every field defaults to `"unknown"`, which
+  never blocks `qualifies` on its own, matching the spec's "a product can
+  meet 10% ROI while still needing approval" distinction.
+
+---
+
 ## Supporting tooling
 
 A few standalone, free (no API calls) tools that sit around both stages -
@@ -754,6 +926,21 @@ new-business-accessibility scoring calibration (see
 [Known limitations](#known-limitations-supplier-qualifier) above) and the
 strict-schema crash fix, neither of which the mocked tests alone would
 have caught.
+
+`tests/test_roi_engine.py` pins the FBA Catalog Analyzer's deterministic
+math to the spec's own worked acceptance-check numbers (the $48/12/2 ->
+$8 COGS example, the P=20/C=8/B=2/S=7 -> 30%/37.5%/15% example, the
+9.818181.../$58.90-rounded-down-and-reverified example, and the "exactly
+8% is not highlighted, exactly 10% meets target" boundary), plus zero/
+negative-denominator and infeasible-discount cases. `tests/test_demand_engine.py`
+covers its required edge cases directly (exactly at the minimum, a "100+"
+lower bound above vs. below the threshold, missing data, parent/combined-
+variation scope). `tests/test_catalog_import.py` and
+`tests/test_catalog_scan.py` run against the real sample catalog in
+`catalogs/` (skipped automatically if that file isn't present) in addition
+to synthetic CSVs - including the real leading-zero-UPC data defect this
+project found in that file (see
+[FBA Catalog Analyzer](#fba-catalog-analyzer-stage-3) above).
 
 ## Origin
 

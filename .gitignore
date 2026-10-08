@@ -56,6 +56,10 @@ ENV/
 !/supplier_data/runs/.gitkeep
 /supplier_data/suppliers/*
 !/supplier_data/suppliers/.gitkeep
+/catalog_data/runs/*
+!/catalog_data/runs/.gitkeep
+/catalog_data/mapping_profiles/*
+!/catalog_data/mapping_profiles/.gitkeep
 
 # Generated document exports / Office lock files
 README.docx
@@ -65,3 +69,9 @@ README.docx
 # not project source. The fictional sample fixture stays tracked.
 *.csv
 !sample_smartscout_export.csv
+
+# Real distributor catalogs (e.g. an actual price list with real negotiated
+# costs) - same reasoning as above. Keep the folder structure tracked via
+# .gitkeep; never the real files inside it.
+/catalogs/*
+!/catalogs/.gitkeep
