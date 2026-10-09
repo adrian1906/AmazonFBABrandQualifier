@@ -14,6 +14,7 @@ import pytest
 from agents import set_tracing_disabled
 
 import approval
+import asin_cache
 import persistence
 import supplier_approval
 import supplier_persistence
@@ -48,3 +49,13 @@ def isolated_supplier_data(tmp_path, monkeypatch):
     monkeypatch.setattr(approval, "OUTBOX_DIR", outbox_dir)
 
     yield data_dir
+
+
+@pytest.fixture(autouse=True)
+def isolated_asin_cache(tmp_path, monkeypatch):
+    """catalog_scan.scan_row writes to asin_cache.ASIN_CACHE_PATH by
+    default (see asin_cache.py) - without this, every test using it would
+    read/write the real project's catalog_data/asin_cache.json, both
+    polluting real data with fixture garbage and letting one test's
+    cached result silently leak into another."""
+    monkeypatch.setattr(asin_cache, "ASIN_CACHE_PATH", tmp_path / "catalog_data" / "asin_cache.json")

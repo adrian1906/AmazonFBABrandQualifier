@@ -60,6 +60,9 @@ ENV/
 !/catalog_data/runs/.gitkeep
 /catalog_data/mapping_profiles/*
 !/catalog_data/mapping_profiles/.gitkeep
+# Accumulates real UPC->ASIN resolution data over time - same treatment
+# as the rest of catalog_data/: real/growing, not project source.
+/catalog_data/asin_cache.json
 
 # Generated document exports / Office lock files
 README.docx

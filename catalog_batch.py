@@ -28,6 +28,7 @@ import csv as csv_module
 from datetime import datetime, timezone
 from pathlib import Path
 
+import asin_cache
 from catalog_import import load_catalog_rows, preview_catalog
 from catalog_models import CatalogScanRun, ColumnMapping
 from catalog_persistence import RUNS_DIR, new_run_id, save_run
@@ -42,25 +43,29 @@ from keepa_adapter import get_keepa_provider
 CATALOG_REPORTS_DIR = Path(__file__).parent / "batch_reports"
 
 
-def _select_provider():
-    """Prefers Keepa when it's live - it's the only one of the two that
-    does BOTH ASIN resolution AND real price history (see
-    keepa_adapter.LiveKeepaProvider.get_pricing_snapshot, live-verified
-    2026-10-08), so picking it gets strictly more capability from one
-    provider. Falls back to Amazon's own SP-API Catalog Items (official,
-    ToS-sanctioned resolution - also live-verified, but no price history
-    yet) when Keepa isn't configured, then to fixture/demo mode. SP-API's
-    OTHER real capability - get_fees_estimate()'s referral/FBA fee
-    numbers - isn't tied to this choice at all; it's a separate call a
-    caller can make regardless of which provider is active here (not yet
-    wired into catalog_scan.py's cost ledger automatically - still manual
-    via known_costs=)."""
-    keepa = get_keepa_provider()
-    if keepa.is_live:
-        return keepa
+def _select_resolution_provider():
+    """Prefers Amazon's own SP-API Catalog Items when configured - the
+    official, ToS-sanctioned source, and (live-verified 2026-10-08) not
+    meaningfully rate-limited for this project's usage, unlike Keepa's
+    real 1-token/minute tier on this account. Combined with asin_cache.py
+    (a UPC is resolved AT MOST once, ever, ACROSS every future scan),
+    this means the slow part only has to happen once per UPC, via the
+    faster service. Falls back to Keepa (fixture/demo mode unless
+    KEEPA_API_KEY is set) when SP-API isn't configured."""
     if sp_api_adapter.is_configured():
         return sp_api_adapter.SpApiCatalogProvider()
-    return keepa
+    return get_keepa_provider()
+
+
+def _select_pricing_provider():
+    """Keepa is the only provider with price history implemented today
+    (sp_api_adapter.py's Product Pricing API equivalent isn't built - see
+    its module docstring) - always Keepa, regardless of which provider
+    handled resolution above. get_fees_estimate()'s real referral/FBA fee
+    numbers are a separate SP-API capability, not tied to this choice at
+    all - not yet wired into catalog_scan.py's cost ledger automatically,
+    still manual via known_costs=."""
+    return get_keepa_provider()
 
 
 def run_preview(path: str, supplier_name: str, price_basis: str, sample_size: int, thorough: bool) -> None:
@@ -98,14 +103,14 @@ def run_batch(
     mapping = ColumnMapping(supplier_name=supplier_name, mapping={}, price_basis=price_basis) if price_basis != "each" else None
     rows, warnings = load_catalog_rows(path, supplier_name, mapping=mapping, limit=limit)
 
-    provider = _select_provider()
-    if isinstance(provider, sp_api_adapter.SpApiCatalogProvider):
-        mode_note = "LIVE Amazon SP-API Catalog Items (ASIN resolution only - no price history yet)"
-    elif provider.is_live:
-        mode_note = "LIVE Keepa data"
-    else:
-        mode_note = "FIXTURE/DEMO mode (no KEEPA_API_KEY or SP-API credentials configured)"
-    print(f"Loaded {len(rows)} row(s) from {path}. Resolution mode: {mode_note}.")
+    resolution_provider = _select_resolution_provider()
+    pricing_provider = _select_pricing_provider()
+    resolution_mode = "LIVE Amazon SP-API" if isinstance(resolution_provider, sp_api_adapter.SpApiCatalogProvider) else \
+        ("LIVE Keepa" if resolution_provider.is_live else "FIXTURE/DEMO")
+    pricing_mode = "LIVE Keepa" if pricing_provider.is_live else "FIXTURE/DEMO (no KEEPA_API_KEY configured)"
+    cached_before = asin_cache.cache_size()
+    print(f"Loaded {len(rows)} row(s) from {path}. Resolution: {resolution_mode} "
+          f"(ASIN cache: {cached_before} UPC(s) already known). Pricing: {pricing_mode}.")
     if warnings:
         print(f"{len(warnings)} import warning(s) - first 5:")
         for w in warnings[:5]:
@@ -116,13 +121,14 @@ def run_batch(
         started_at=datetime.now(timezone.utc), history_window_days=history_days,
         target_roi=target_roi, highlight_threshold=highlight_threshold,
         minimum_monthly_sales=minimum_monthly_sales, roi_convention=CATALOG_ROI_CONVENTION,
-        is_live_data=provider.is_live,
+        is_live_data=resolution_provider.is_live or pricing_provider.is_live,
     )
 
     for i, row in enumerate(rows, start=1):
         try:
             result = scan_row(
-                row, provider=provider, history_days=history_days, target_roi=target_roi,
+                row, resolution_provider=resolution_provider, pricing_provider=pricing_provider,
+                history_days=history_days, target_roi=target_roi,
                 highlight_threshold=highlight_threshold, minimum_monthly_sales=minimum_monthly_sales,
             )
             run.results.append(result)
@@ -137,21 +143,22 @@ def run_batch(
     for r in run.results:
         tiers[r.roi.tier] = tiers.get(r.roi.tier, 0) + 1
     print(f"\nScanned {len(run.results)} row(s). Tier breakdown: {tiers}")
+    print(f"ASIN cache: {asin_cache.cache_size()} UPC(s) now known "
+          f"({asin_cache.cache_size() - cached_before} newly resolved this run - free on any future scan).")
     print(f"Full run saved to: {saved_path}")
     print(f"Summary CSV: {summary_path}")
-    if not provider.is_live:
+    if not resolution_provider.is_live:
         print(
-            "\nEvery row above is INCOMPLETE/needs_review because this ran in fixture/demo mode - "
-            "that's expected, not a bug. Set KEEPA_API_KEY for live ASIN resolution, or confirm a "
-            "match/price manually (see catalog_scan.scan_row's override_* parameters) to get a real ROI."
+            "\nEvery row above is INCOMPLETE/needs_review because resolution ran in fixture/demo mode - "
+            "that's expected, not a bug. Configure SP-API or KEEPA_API_KEY for live ASIN resolution, or "
+            "confirm a match/price manually (see catalog_scan.scan_row's override_* parameters)."
         )
-    elif isinstance(provider, sp_api_adapter.SpApiCatalogProvider):
+    else:
         print(
             "\nResolution was live (real Amazon ASIN candidates above), but every row is still "
-            "INCOMPLETE/needs_review - by design, neither this nor a Keepa match auto-confirms the "
-            "retail pack count, and SP-API price history isn't wired in yet. Review the resolved ASINs "
-            "in the summary CSV, then re-run a specific row with override_asin_candidate (match_status="
-            "'verified') and override_selling_price to get a real ROI for it."
+            "INCOMPLETE/needs_review by design - no provider auto-confirms the retail pack count. "
+            "Review the resolved ASINs in the summary CSV, then re-run a specific row with "
+            "override_asin_candidate (match_status='verified') to get a real ROI for it."
         )
     return run
 

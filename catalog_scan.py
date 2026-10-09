@@ -18,8 +18,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
+import asin_cache
 from catalog_models import (
-    AsinCandidate, CatalogRow, CatalogScanResult, CostComponent, DemandAssessment,
+    AsinCandidate, AsinResolution, CatalogRow, CatalogScanResult, CostComponent, DemandAssessment,
     EligibilityCheck, RoiResult,
 )
 from config import (
@@ -126,10 +127,46 @@ def resolve_and_build_cost_ledger(
     return list(ledger_by_name.values()), ledger_by_name["product_cogs"].value, b_total, s_total, reasons
 
 
+def _resolve_with_cache(resolution_provider: KeepaProvider, row: CatalogRow, use_cache: bool) -> AsinResolution:
+    """UPC -> AsinResolution, checking the persistent asin_cache first -
+    see asin_cache.py's module docstring on why this is cached
+    independently of price data. On a cache miss, resolves live (retrying
+    the leading-zero-corrected UPC if the raw one finds nothing - a
+    confirmed real defect in ~32% of the DC 55 sample catalog's UPCs),
+    then saves whichever UPC string actually produced the result -
+    raw or corrected alike, including a genuine no-match, so a known
+    dead-end UPC isn't re-queried every single scan either."""
+    if use_cache and row.upc:
+        cached = asin_cache.get_cached(row.upc)
+        if cached is not None:
+            return cached
+
+    resolution = resolution_provider.resolve_upc(row.upc or "")
+    resolved_upc_key = row.upc
+
+    if not resolution.candidates and row.upc_suggested_correction:
+        corrected = resolution_provider.resolve_upc(row.upc_suggested_correction)
+        if corrected.candidates:
+            corrected.resolution_reason = (
+                f"Resolved via leading-zero-corrected UPC {row.upc_suggested_correction} "
+                f"(original catalog value '{row.upc}' returned no match). {corrected.resolution_reason or ''}"
+            ).strip()
+            resolution = corrected
+            resolved_upc_key = row.upc_suggested_correction
+
+    if use_cache and resolved_upc_key:
+        asin_cache.save(resolved_upc_key, resolution)
+
+    return resolution
+
+
 def scan_row(
     row: CatalogRow,
     *,
     provider: Optional[KeepaProvider] = None,
+    resolution_provider: Optional[KeepaProvider] = None,
+    pricing_provider: Optional[KeepaProvider] = None,
+    use_asin_cache: bool = True,
     history_days: int = CATALOG_DEFAULT_HISTORY_DAYS,
     target_roi: Decimal = CATALOG_TARGET_ROI,
     highlight_threshold: Decimal = CATALOG_HIGHLIGHT_ROI_THRESHOLD,
@@ -144,33 +181,32 @@ def scan_row(
 ) -> CatalogScanResult:
     """Evaluate one CatalogRow end-to-end.
 
+    Resolution and pricing can come from two DIFFERENT providers -
+    resolution_provider/pricing_provider - because they're not equally
+    rate-limited: Amazon's own SP-API has no comparably tight limit for
+    this project's usage, so it's the better choice for bulk ASIN
+    resolution, while Keepa is the only one that does price history at
+    all. `provider` is a backward-compatible shared default used for
+    whichever of the two isn't given explicitly (see catalog_batch.py's
+    _select_resolution_provider/_select_pricing_provider). A successful
+    OR unmatched resolution is cached persistently by UPC (asin_cache.py)
+    regardless of which provider produced it, so a second scan of the
+    same - or a different - catalog never re-pays for a UPC it's already
+    seen; pass use_asin_cache=False to force a fresh live lookup.
+
     A match only counts as "confirmed" when override_asin_candidate is
     supplied with match_status="verified" and a listing_pack_quantity set -
     i.e. a human (or, once implemented, verified live evidence) has
-    actually confirmed the pack relationship. Neither provider here ever
-    sets match_status="verified" on its own (FixtureKeepaProvider can't;
-    LiveKeepaProvider deliberately doesn't - see keepa_adapter.py), so a
-    plain scan with no override always comes back needs_review/INCOMPLETE,
+    actually confirmed the pack relationship. No provider here ever sets
+    match_status="verified" on its own (FixtureKeepaProvider can't;
+    LiveKeepaProvider/SpApiCatalogProvider deliberately don't), so a plain
+    scan with no override always comes back needs_review/INCOMPLETE,
     which is the correct, honest default rather than a false positive.
     """
-    provider = provider or get_keepa_provider()
-    resolution = provider.resolve_upc(row.upc or "")
+    resolution_provider = resolution_provider or provider or get_keepa_provider()
+    pricing_provider = pricing_provider or provider or resolution_provider
 
-    # catalog_import.py flags a common real defect - a UPC that lost a
-    # leading zero upstream - as upc_suggested_correction, WITHOUT
-    # changing row.upc itself. If the raw value found nothing, it's worth
-    # one more live lookup on the checksum-valid reconstruction before
-    # giving up - confirmed for real on the DC 55 sample catalog, where
-    # ~32% of UPCs have exactly this defect and would otherwise always
-    # resolve as unmatched despite being real, resolvable products.
-    if not resolution.candidates and row.upc_suggested_correction:
-        corrected = provider.resolve_upc(row.upc_suggested_correction)
-        if corrected.candidates:
-            corrected.resolution_reason = (
-                f"Resolved via leading-zero-corrected UPC {row.upc_suggested_correction} "
-                f"(original catalog value '{row.upc}' returned no match). {corrected.resolution_reason or ''}"
-            ).strip()
-            resolution = corrected
+    resolution = _resolve_with_cache(resolution_provider, row, use_asin_cache)
 
     candidate = override_asin_candidate
     if candidate is None and resolution.candidates and len(resolution.candidates) == 1:
@@ -183,9 +219,9 @@ def scan_row(
     pricing = None
     pricing_error = None
     selling_price = override_selling_price
-    if candidate and selling_price is None and (provider.is_live or override_asin_candidate):
+    if candidate and selling_price is None and (pricing_provider.is_live or override_asin_candidate):
         try:
-            pricing = provider.get_pricing_snapshot(candidate.asin, history_days)
+            pricing = pricing_provider.get_pricing_snapshot(candidate.asin, history_days)
         except NotImplementedError as exc:
             # A provider (e.g. SpApiCatalogProvider) can do ASIN resolution
             # live without yet doing price history - that's "no pricing

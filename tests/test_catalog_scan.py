@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pytest
 
+import asin_cache
 from catalog_import import load_catalog_rows
-from catalog_models import AsinCandidate, BillOfMaterialsLine, CostComponent, DemandAssessment
+from catalog_models import AsinCandidate, AsinResolution, BillOfMaterialsLine, CostComponent, DemandAssessment
 from catalog_scan import scan_row
 from demand_engine import assess_demand
 from keepa_adapter import FixtureKeepaProvider
@@ -260,3 +261,88 @@ def test_scan_real_sample_row_with_manual_override_can_qualify():
     )
     assert result.roi.normalized_cogs == row.purchase_price  # 1:1 pack match - no normalization change
     assert result.roi.is_complete is True
+
+
+# ---------------------------------------------------------------------------
+# ASIN cache + split resolution/pricing providers.
+# isolated_asin_cache (conftest.py, autouse) redirects the cache to a
+# tmp_path, so these never touch the real project's catalog_data/.
+# ---------------------------------------------------------------------------
+
+class _CountingProvider(FixtureKeepaProvider):
+    """Tracks how many times resolve_upc was actually called - used to
+    prove the cache prevents a second live call for a UPC already seen."""
+
+    def __init__(self):
+        self.resolve_calls = 0
+
+    def resolve_upc(self, upc):
+        self.resolve_calls += 1
+        return super().resolve_upc(upc)
+
+
+class _PricingOnlyProvider(FixtureKeepaProvider):
+    """A second, DIFFERENT provider instance - proves pricing_provider is
+    actually used instead of resolution_provider for get_pricing_snapshot."""
+    is_live = True
+
+    def __init__(self):
+        self.pricing_calls = 0
+
+    def get_pricing_snapshot(self, asin, window_days):
+        self.pricing_calls += 1
+        from catalog_models import PricingSnapshot
+        return PricingSnapshot(asin=asin, series=[], window_stats={}, planning_price=D("9.99"),
+                                planning_price_basis="from _PricingOnlyProvider", requires_review=False)
+
+
+def test_second_scan_of_same_upc_hits_cache_not_the_provider():
+    provider = _CountingProvider()
+    row = _row(upc="034463016148")
+
+    scan_row(row, provider=provider)
+    assert provider.resolve_calls == 1
+
+    scan_row(row, provider=provider)  # same UPC again
+    assert provider.resolve_calls == 1  # cache hit - no second live call
+
+    assert asin_cache.get_cached("034463016148") is not None
+
+
+def test_use_asin_cache_false_bypasses_cache():
+    provider = _CountingProvider()
+    row = _row(upc="034463016148")
+
+    scan_row(row, provider=provider, use_asin_cache=True)
+    assert provider.resolve_calls == 1
+
+    scan_row(row, provider=provider, use_asin_cache=False)
+    assert provider.resolve_calls == 2  # cache deliberately skipped
+
+
+def test_resolution_and_pricing_use_different_providers():
+    resolution_provider = _CountingProvider()
+    pricing_provider = _PricingOnlyProvider()
+    candidate = AsinCandidate(asin="B0TEST", match_status="verified", confidence="high",
+                               listing_pack_quantity=2, pack_relationship="identical_multipack")
+    row = _row(upc="034463016148", purchase_price=D("12"), units_per_purchase_unit=12)
+
+    result = scan_row(
+        row, resolution_provider=resolution_provider, pricing_provider=pricing_provider,
+        override_asin_candidate=candidate, known_costs=_known_bcd_costs(),
+    )
+
+    assert pricing_provider.pricing_calls == 1
+    assert result.roi.selling_price == D("9.99")  # came from pricing_provider, not resolution_provider
+    assert result.pricing.planning_price_basis == "from _PricingOnlyProvider"
+
+
+def test_cached_negative_resolution_is_reused_too():
+    asin_cache.save("999999999999", AsinResolution(upc="999999999999", candidates=[], resolution_reason="No match.", is_live_data=True))
+    provider = _CountingProvider()
+    row = _row(upc="999999999999")
+
+    result = scan_row(row, provider=provider)
+
+    assert provider.resolve_calls == 0  # never called - the cached no-match was reused
+    assert result.resolution.candidates == []

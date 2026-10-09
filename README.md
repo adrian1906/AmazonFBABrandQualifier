@@ -789,6 +789,38 @@ never a silent guess baked into a result. A full run writes a ranked
 summary CSV to `batch_reports/` and the complete per-row result (cost
 ledger, evidence, every intermediate number) to `catalog_data/runs/`.
 
+### Resolution and pricing use different providers, on purpose
+
+Keepa's real rate limit on this account is 1 token/minute - far too slow
+to resolve tens of thousands of UPCs against directly. Amazon's own
+SP-API has no comparably tight limit for this project's usage, so
+`catalog_batch.py` splits the work: **SP-API resolves ASINs (when
+configured), Keepa only prices them (by ASIN, once resolved)** - Keepa is
+the only one of the two with price history at all, so that half can't be
+avoided, but resolution doesn't have to pay Keepa's slow rate at all.
+
+That resolution result is then cached PERSISTENTLY, independent of any
+one catalog file (`asin_cache.py`, `catalog_data/asin_cache.json`,
+gitignored - it accumulates real data, not project source). A UPC-to-ASIN
+mapping is a fact about the product, not about this month's price list,
+so once resolved it's free on every future scan - re-running this
+catalog, a newer price list from the same supplier, or even a different
+supplier selling the same product. Live-verified: resolving 5 real rows
+cost 5 real SP-API calls the first time and exactly 0 the second time.
+The cache expires after `asin_cache.ASIN_CACHE_STALE_DAYS` (180, far
+longer than price data's own staleness window) and stores a genuine
+"no match" too, so a known dead-end UPC isn't re-queried every scan
+either - pass `scan_row(..., use_asin_cache=False)` to force a fresh
+lookup regardless.
+
+`catalog_scan.scan_row` takes `resolution_provider=`/`pricing_provider=`
+separately for this reason (`provider=` still works as a shared default
+for both, for backward compatibility and simpler one-off calls).
+`catalog_batch.py`'s `_select_resolution_provider()`/`_select_pricing_provider()`
+make the actual choice: SP-API first for resolution (falling back to
+Keepa, then fixture/demo), always Keepa for pricing (falling back to
+fixture/demo - SP-API has no price history yet, see above).
+
 ### The ROI math
 
 Two conventions are always computed and shown; `config.CATALOG_ROI_CONVENTION`
@@ -862,9 +894,10 @@ size. See `demand_engine.py` and `tests/test_demand_engine.py`.
 | `demand_engine.py` | Minimum-monthly-sales classification |
 | `keepa_adapter.py` | ASIN resolution AND real price history via Keepa - **live** (incl. rate limiting), see above |
 | `sp_api_adapter.py` | ASIN resolution/fee estimates via Amazon's own SP-API - **live**, see above |
+| `asin_cache.py` | Persistent UPC -> ASIN cache, independent of any one catalog file - see "Resolution and pricing use different providers" above |
 | `catalog_scan.py` | Orchestrates one row: match -> cost ledger -> ROI -> demand -> qualify |
 | `catalog_persistence.py` | Save/load scan runs and column-mapping profiles |
-| `catalog_batch.py` | CLI entry point - `--preview` and `--run` (this section's examples); prefers Keepa (does both resolution and pricing) over SP-API (resolution only) when both are available |
+| `catalog_batch.py` | CLI entry point - `--preview` and `--run` (this section's examples); SP-API resolves, Keepa prices - see above |
 
 ### Known limitations (FBA Catalog Analyzer)
 
@@ -999,7 +1032,14 @@ every `requests`/`time.sleep` call (same no-real-network-calls, no-slow-
 tests rules as the rest of this suite) using the ACTUAL response shapes
 and field semantics (Keepa Time Minutes conversion, the -1 sentinel,
 token-bucket fields) captured live against R&T's real accounts on
-2026-10-08, not guessed-at schemas.
+2026-10-08, not guessed-at schemas. `tests/test_asin_cache.py` and the
+cache-specific tests in `tests/test_catalog_scan.py` cover the
+persistent UPC->ASIN cache (round trip, staleness, a corrupt file
+degrading to empty rather than crashing, a negative "no match" result
+being cached too) and that `resolution_provider`/`pricing_provider` are
+genuinely used independently - `conftest.py`'s `isolated_asin_cache`
+fixture (autouse) redirects the cache file to a tmp_path for every test,
+the same way `isolated_supplier_data` already did for the other stages.
 
 ## Origin
 
