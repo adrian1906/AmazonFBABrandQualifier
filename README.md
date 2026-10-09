@@ -700,26 +700,70 @@ including the "100+"-lower-bound and parent/child-ambiguity cases
 ledger, an ROI tier, and a qualify/don't-qualify decision with a reason
 (`catalog_scan.py`).
 
-**Not live yet - runs in fixture/demo mode:** ASIN resolution and Amazon
-price history both go through Keepa (`keepa_adapter.py`), and no
-`KEEPA_API_KEY` is configured in this environment. Every row from a real
-scan therefore comes back `needs_review`/`INCOMPLETE` - an honest "can't
-confirm this without live data," never a fabricated profit number. This
-is the spec's own explicit fallback, not a bug: set `KEEPA_API_KEY` (a
-real Keepa **API key**, from your Keepa account's API settings - **not**
-your Keepa login password, which can't authenticate the API at all) and
-`catalog_batch.py` picks up live resolution automatically. Even then,
-**price-history decoding is deliberately left unimplemented**
-(`LiveKeepaProvider.get_pricing_snapshot` raises `NotImplementedError`
-with an explanation) - Keepa's historical-price encoding needs to be
-verified against a real response before this project trusts it with a
-financial calculation, matching the "live-test real API behavior before
-declaring a feature complete" discipline the rest of this README follows.
-Amazon SP-API (Product Fees, Catalog Items-by-UPC, Listings Restrictions)
-isn't wired in either - it needs an OAuth app registration in Seller
-Central, not a username/password, and would materially improve this
-feature (real fees instead of the 15% referral-rate fallback, an
-official ASIN-by-UPC lookup, real eligibility status) if set up later.
+**Live as of 2026-10-08, against R&T's real accounts:** Both Keepa
+(`keepa_adapter.py`, needs `KEEPA_API_KEY` - a real Keepa **API key**,
+**not** your Keepa login password) and Amazon's own SP-API Catalog Items
+(`sp_api_adapter.py`, needs `AMAZONSOLUTIONCLIENTID` /
+`AMAZONSOLUTIONSECRET` / `AMAZONSOLUTIONREFRESHTOKEN`) do real ASIN
+resolution. `catalog_batch.py` prefers Keepa when it's configured, since
+it's the only one of the two that also does price **history** - SP-API's
+equivalent (Product Pricing API) isn't built yet, so `catalog_batch.py`
+falls back to SP-API-only (resolution, no history) when Keepa isn't set,
+then to fixture/demo mode when neither is.
+
+Live-verified end to end, both ways: a real UPC from the sample catalog
+resolved to the same real ASIN (`B0CLNWM532`, "1057 Extra Mature Scottish
+Cheddar, 7 OZ") via both Keepa and SP-API independently; `get_fees_estimate()`
+returned a real referral fee ($2.40 on a $15.99 price, ~15.0% - matching
+this project's own fallback rate almost exactly for this category), and
+correctly *failed* an `IsAmazonFulfilled=True` (FBA) estimate for that
+same item because it's refrigerated and isn't FBA-eligible - a real
+constraint surfaced correctly, not a bug; and `get_pricing_snapshot()`
+returned a real 365-day historical low ($84.79, time-weighted mean
+$91.73, 219/365 days with coverage) for a different real catalog item,
+which fed straight into `roi_engine` to produce a real `TARGET_MET`
+result (`landed_cost_roi` ≈ 11.4%) with zero manually-entered price - the
+full pipeline, for real, start to end. `catalog_import.py`'s leading-zero-
+UPC correction (above) is wired INTO resolution too: `catalog_scan.py`
+retries a no-match UPC against its checksum-corrected form before giving
+up, which is how most of the sample catalog's truncated UPCs actually
+resolve.
+
+`get_pricing_snapshot(asin, window_days)` takes window_days as a plain
+integer - 30, 60, 90, 365, 730, or any custom number - passed straight
+through to Keepa's own server-side min/max/mean computation over exactly
+that window (not just its fixed 30/90/180/365 buckets), so a seasonal
+product's 365- or 730-day lookback (`config.CATALOG_SEASONAL_HISTORY_DAYS`
+/ `_EXTENDED_HISTORY_DAYS`) works the same way a 30-day one does.
+`catalog_batch.py --history-days N` exposes this on the CLI. The
+**planning price is always the LOWER of the current price and that
+window's historical low** (never the average, never the current price
+alone) - the conservative "profit even at the lowest point" basis the
+spec calls for - and it prefers the shipping-inclusive Buy Box series,
+falling back through lowest-new-FBA, lowest-new-any-fulfillment, and
+Amazon's own retail price when Buy Box has no data, with every fallback
+visibly flagged (`requires_review=True`, `planning_price_basis` names
+which series was actually used) rather than silently substituted. A
+*lack* of data in a short window is common and correct, not a bug -
+confirmed live on two real low-traffic catalog items that had zero
+tracked history in their most recent 30 days despite having real history
+further back; `raw_minimum` stays `None` rather than reading that as "no
+sales" or "$0."
+
+Keepa's own token-bucket rate limit (reported in every response, even
+error ones) is respected automatically: `KeepaRateLimiter`
+(`keepa_adapter.py`) paces requests to the account's real `refillRate`
+rather than guessing, and retries a real 429 ("out of tokens") using
+Keepa's own reported `refillIn`, up to a bounded number of attempts and a
+capped maximum single wait - so a very slow plan (e.g. 1 token/minute)
+works correctly for a small batch, just slower, instead of erroring out.
+
+And critically: **even a real resolved ASIN never auto-qualifies a row**
+- both adapters return `match_status="needs_review"`, because resolving a
+UPC to an ASIN doesn't by itself confirm the retail pack count. A human
+(via `override_asin_candidate`) still has to confirm that before
+cost-ledger math runs - real ASIN candidates and real prices make that
+review faster, but don't skip it.
 
 ### Running it
 
@@ -816,17 +860,26 @@ size. See `demand_engine.py` and `tests/test_demand_engine.py`.
 | `catalog_import.py` | CSV/XLSX intake, column-mapping, UPC validation/leading-zero detection |
 | `roi_engine.py` | Pure deterministic cost/ROI math - no I/O, no catalog/Keepa knowledge |
 | `demand_engine.py` | Minimum-monthly-sales classification |
-| `keepa_adapter.py` | ASIN resolution/price history - fixture/demo mode by default, see above |
+| `keepa_adapter.py` | ASIN resolution AND real price history via Keepa - **live** (incl. rate limiting), see above |
+| `sp_api_adapter.py` | ASIN resolution/fee estimates via Amazon's own SP-API - **live**, see above |
 | `catalog_scan.py` | Orchestrates one row: match -> cost ledger -> ROI -> demand -> qualify |
 | `catalog_persistence.py` | Save/load scan runs and column-mapping profiles |
-| `catalog_batch.py` | CLI entry point - `--preview` and `--run` (this section's examples) |
+| `catalog_batch.py` | CLI entry point - `--preview` and `--run` (this section's examples); prefers Keepa (does both resolution and pricing) over SP-API (resolution only) when both are available |
 
 ### Known limitations (FBA Catalog Analyzer)
 
-- No live Keepa, SmartScout API/MCP, or Amazon SP-API integration is
-  wired in - see "What it does and doesn't do today" above. Every live
-  scan today is a `needs_review` screening pass over the cost/ROI/demand
-  plumbing, not a profit claim.
+- SmartScout API/MCP integration isn't wired in. SP-API's Product Pricing
+  API (its equivalent of Keepa's historical tracking) isn't built either,
+  so Keepa is the only source of price history today. Every scan is
+  still a `needs_review` screening pass until a human confirms the pack
+  match (`override_asin_candidate`) - real ASIN/price data makes that
+  review faster and better-informed, never automatic.
+- SP-API's `get_fees_estimate()`/`extract_fee_components()` (real
+  referral/FBA fees) aren't wired into `catalog_scan.py`'s cost ledger
+  automatically yet - still manual via `known_costs=` today.
+- `KeepaRateLimiter` paces Keepa calls correctly but is Keepa-specific;
+  SP-API has no equivalent throttling yet (its own rate limits are far
+  more generous, so this hasn't been needed so far).
 - PDF catalogs aren't parsed - `catalog_import.load_catalog_rows` raises a
   clear error pointing at a manual CSV/XLSX conversion route rather than
   guessing at an unstructured table.
@@ -941,6 +994,12 @@ variation scope). `tests/test_catalog_import.py` and
 to synthetic CSVs - including the real leading-zero-UPC data defect this
 project found in that file (see
 [FBA Catalog Analyzer](#fba-catalog-analyzer-stage-3) above).
+`tests/test_sp_api_adapter.py` and `tests/test_keepa_adapter.py` mock
+every `requests`/`time.sleep` call (same no-real-network-calls, no-slow-
+tests rules as the rest of this suite) using the ACTUAL response shapes
+and field semantics (Keepa Time Minutes conversion, the -1 sentinel,
+token-bucket fields) captured live against R&T's real accounts on
+2026-10-08, not guessed-at schemas.
 
 ## Origin
 

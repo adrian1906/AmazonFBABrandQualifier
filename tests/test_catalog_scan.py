@@ -66,6 +66,59 @@ def test_plain_fixture_scan_is_incomplete_not_a_false_positive():
     assert any("not confirmed" in r for r in result.roi.incomplete_reasons)
 
 
+class _LeadingZeroAwareFixtureProvider(FixtureKeepaProvider):
+    """Returns no candidates for an 11-digit UPC, but a real match for its
+    12-digit zero-padded form - mirrors what a real provider does for the
+    DC 55 sample catalog's leading-zero-truncated UPCs."""
+    is_live = True
+
+    def resolve_upc(self, upc):
+        if upc == "034463016148":
+            return super().resolve_upc(upc)
+        from catalog_models import AsinResolution
+        return AsinResolution(upc=upc, candidates=[], resolution_reason="No match.", is_live_data=True)
+
+
+def test_scan_row_retries_with_leading_zero_corrected_upc():
+    row = _row(upc="34463016148", purchase_price=D("4"))  # 11 digits - the raw catalog value
+    row.upc_suggested_correction = "034463016148"  # what catalog_import.py would have flagged
+
+    result = scan_row(row, provider=_LeadingZeroAwareFixtureProvider())
+
+    assert len(result.resolution.candidates) == 1
+    assert "leading-zero-corrected" in result.resolution.resolution_reason
+    assert "34463016148" in result.resolution.resolution_reason  # mentions the original value too
+
+
+def test_scan_row_does_not_retry_when_correction_also_fails():
+    row = _row(upc="99999999999", purchase_price=D("4"))
+    row.upc_suggested_correction = "099999999999"  # wouldn't matter - also returns nothing below
+
+    result = scan_row(row, provider=_LeadingZeroAwareFixtureProvider())
+    assert result.resolution.candidates == []
+
+
+class _LiveNoHistoryProvider(FixtureKeepaProvider):
+    """A live provider that can resolve an ASIN but not price history yet
+    (mirrors sp_api_adapter.SpApiCatalogProvider's current state) - must
+    degrade to a clear incomplete reason, never crash the row."""
+    is_live = True
+
+    def get_pricing_snapshot(self, asin, window_days):
+        raise NotImplementedError("pricing not implemented for this provider")
+
+
+def test_provider_pricing_not_implemented_degrades_gracefully():
+    candidate = _confirmed_candidate(listing_pack_quantity=2)
+    result = scan_row(
+        _row(purchase_price=D("12"), units_per_purchase_unit=12),
+        provider=_LiveNoHistoryProvider(), override_asin_candidate=candidate, known_costs=_known_bcd_costs(),
+    )
+    assert result.roi.tier == "INCOMPLETE"
+    assert result.qualifies is False
+    assert any("pricing not implemented" in r for r in result.roi.incomplete_reasons)
+
+
 def test_row_with_no_upc_gets_empty_resolution():
     result = scan_row(_row(upc=None), provider=FixtureKeepaProvider())
     assert result.resolution.candidates == []

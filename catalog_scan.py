@@ -156,6 +156,22 @@ def scan_row(
     provider = provider or get_keepa_provider()
     resolution = provider.resolve_upc(row.upc or "")
 
+    # catalog_import.py flags a common real defect - a UPC that lost a
+    # leading zero upstream - as upc_suggested_correction, WITHOUT
+    # changing row.upc itself. If the raw value found nothing, it's worth
+    # one more live lookup on the checksum-valid reconstruction before
+    # giving up - confirmed for real on the DC 55 sample catalog, where
+    # ~32% of UPCs have exactly this defect and would otherwise always
+    # resolve as unmatched despite being real, resolvable products.
+    if not resolution.candidates and row.upc_suggested_correction:
+        corrected = provider.resolve_upc(row.upc_suggested_correction)
+        if corrected.candidates:
+            corrected.resolution_reason = (
+                f"Resolved via leading-zero-corrected UPC {row.upc_suggested_correction} "
+                f"(original catalog value '{row.upc}' returned no match). {corrected.resolution_reason or ''}"
+            ).strip()
+            resolution = corrected
+
     candidate = override_asin_candidate
     if candidate is None and resolution.candidates and len(resolution.candidates) == 1:
         candidate = resolution.candidates[0]
@@ -165,9 +181,16 @@ def scan_row(
     confirmed_match = bool(candidate and candidate.match_status == "verified" and candidate.listing_pack_quantity)
 
     pricing = None
+    pricing_error = None
     selling_price = override_selling_price
-    if candidate and selling_price is None:
-        pricing = provider.get_pricing_snapshot(candidate.asin, history_days) if provider.is_live or override_asin_candidate else None
+    if candidate and selling_price is None and (provider.is_live or override_asin_candidate):
+        try:
+            pricing = provider.get_pricing_snapshot(candidate.asin, history_days)
+        except NotImplementedError as exc:
+            # A provider (e.g. SpApiCatalogProvider) can do ASIN resolution
+            # live without yet doing price history - that's "no pricing
+            # available from this provider," not a reason to fail the row.
+            pricing_error = str(exc)
         if pricing:
             selling_price = pricing.planning_price
 
@@ -179,7 +202,9 @@ def scan_row(
     if not confirmed_match:
         incomplete_reasons.insert(0, "ASIN match not confirmed (needs_review, rejected, unmatched, or pack count unresolved).")
     if selling_price is None:
-        incomplete_reasons.append("No selling price available (no live/override price, or insufficient history).")
+        reason = f"No selling price available ({pricing_error})" if pricing_error else \
+            "No selling price available (no live/override price, or insufficient history)."
+        incomplete_reasons.append(reason)
 
     if incomplete_reasons or cogs is None or b_total is None or s_total is None or selling_price is None:
         roi = RoiResult(
